@@ -13,7 +13,20 @@
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
-  function signed(n) { return n > 0 ? '+' + n : String(n); }
+  var signed = E.signed;
+  function cssEsc(s) {
+    return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/["\\\]]/g, '\\$&');
+  }
+  function byData(attr, id) {
+    return document.querySelector('[' + attr + '="' + cssEsc(id) + '"]');
+  }
+  /** Screen-reader announcement without re-reading the whole leaderboard. */
+  function announce(msg) {
+    var el = $('#liveAnnounce');
+    if (!el) return;
+    el.textContent = '';
+    setTimeout(function () { el.textContent = msg; }, 30);
+  }
 
   /* ---------- boot ---------- */
   store.load();
@@ -201,11 +214,11 @@
     if (!game) return;
 
     $('#scoreGameName').textContent = game.name;
-    var leaderRow = E.standings(game)[0];
+    var rows = E.standings(game);
     $('#scoreTargetLine').textContent = 'First to ' + game.targetScore +
-      (leaderRow && leaderRow.hitTarget ? ' — target reached!' : '');
+      (rows[0] && rows[0].hitTarget ? ' — target reached!' : '');
 
-    $('#leaderboard').innerHTML = E.standings(game).map(function (r) {
+    $('#leaderboard').innerHTML = rows.map(function (r) {
       return '<li class="' + (r.isLeader ? 'leader ' : '') + (r.hitTarget ? 'hit-target' : '') + '">' +
         '<span class="rank" aria-hidden="true">' + r.rank + '</span>' +
         dotHtml(r.player) +
@@ -227,7 +240,7 @@
 
   function adjHtml(adj, game) {
     return '<div class="adj-card"><span class="tag">Correction</span>' +
-      '<span>' + esc((game.players.find(function (p) { return p.id === adj.playerId; }) || { name: '(removed)' }).name) +
+      '<span>' + esc(E.playerName(game, adj.playerId)) +
       ' <b>' + signed(adj.delta) + '</b>' +
       (adj.label ? ' — ' + esc(adj.label) : '') + '</span>' +
       '<button type="button" class="del" data-del-adj="' + esc(adj.id) + '" aria-label="Delete this correction">✕</button>' +
@@ -237,7 +250,7 @@
   function historyHtml(game) {
     var cumulative = E.cumulativeByRound(game);
     var out = [];
-    var standalone = game.adjustments.filter(function (a) { return a.attachedToRoundIndex === null; });
+    var standalone = game.adjustments.filter(E.isStandalone);
     standalone.slice().reverse().forEach(function (adj) { out.push(adjHtml(adj, game)); });
 
     game.rounds.slice().reverse().forEach(function (round) {
@@ -269,11 +282,11 @@
   $('#history').addEventListener('click', function (e) {
     var delAdj = e.target.closest('[data-del-adj]');
     if (delAdj) {
-      var game = store.currentGame();
+      var adjId = delAdj.getAttribute('data-del-adj');
       confirmAction('Delete this correction? Totals will change.', 'Delete')
         .then(function (ok) {
-          if (ok && game) {
-            E.deleteAdjustment(game, delAdj.getAttribute('data-del-adj'));
+          var game = store.currentGame(); // re-fetch: state may have merged while the dialog was open
+          if (ok && game && E.deleteAdjustment(game, adjId)) {
             store.touch(game);
             renderAll();
             toast('Correction deleted');
@@ -303,7 +316,7 @@
   }
   $('#addPlayerRowBtn').addEventListener('click', function () {
     var host = $('#newGamePlayers');
-    if (host.querySelectorAll('input').length >= 8) { toast('8 players max (with expansion)'); return; }
+    if (host.querySelectorAll('input').length >= E.MAX_PLAYERS) { toast(E.MAX_PLAYERS + ' players max (with expansion)'); return; }
     host.insertAdjacentHTML('beforeend', playerRowHtml(''));
     host.lastElementChild.querySelector('input').focus();
   });
@@ -335,6 +348,7 @@
   var roundDialog = $('#roundDialog');
   var roundMode = 'simple';
   var editingRoundId = null;
+  var editingOriginalIds = null; // players who had a score in the round being edited
 
   function setRoundMode(mode, prefill) {
     roundMode = mode;
@@ -354,17 +368,22 @@
     host.innerHTML = game.players.map(function (p) {
       var pre = prefill[p.id] || {};
       if (roundMode === 'calc') {
+        // Entered a plain value in Simple mode? Derive exact calc fields so
+        // switching modes never loses what was typed.
+        if (pre.dutchCards === undefined && pre.value !== undefined) {
+          pre = E.toCalcFields(pre.value);
+        }
         return '<div class="score-row calc"><span class="who">' + dotHtml(p) + '<span>' + esc(p.name) + '</span></span>' +
           '<div class="calc-inputs">' +
-          '<label>Played to Dutch<input type="number" inputmode="numeric" min="0" max="40" data-calc-dutch="' + esc(p.id) + '" value="' + (pre.dutchCards !== undefined ? pre.dutchCards : '') + '"></label>' +
-          '<label>Left in Blitz<input type="number" inputmode="numeric" min="0" max="10" data-calc-blitz="' + esc(p.id) + '" value="' + (pre.blitzLeft !== undefined ? pre.blitzLeft : '') + '"></label>' +
+          '<label>Played to Dutch<input type="number" min="0" max="40" step="1" data-calc-dutch="' + esc(p.id) + '" value="' + (pre.dutchCards !== undefined ? pre.dutchCards : '') + '"></label>' +
+          '<label>Left in Blitz<input type="number" min="0" max="10" step="1" data-calc-blitz="' + esc(p.id) + '" value="' + (pre.blitzLeft !== undefined ? pre.blitzLeft : '') + '"></label>' +
           '<span class="calc-result" data-calc-result="' + esc(p.id) + '" aria-live="off">= 0</span>' +
           '</div></div>';
       }
       return '<div class="score-row"><span class="who">' + dotHtml(p) + '<span>' + esc(p.name) + '</span></span>' +
         '<div class="stepper">' +
         '<button type="button" class="step-btn" data-step="-1" data-player="' + esc(p.id) + '" aria-label="Decrease ' + esc(p.name) + ' score">−</button>' +
-        '<input type="text" inputmode="numeric" pattern="-?[0-9]*" autocomplete="off" data-simple="' + esc(p.id) + '" value="' + (pre.value !== undefined ? pre.value : '') + '" aria-label="' + esc(p.name) + ' round score">' +
+        '<input type="number" step="1" autocomplete="off" data-simple="' + esc(p.id) + '" value="' + (pre.value !== undefined ? pre.value : '') + '" aria-label="' + esc(p.name) + ' round score">' +
         '<button type="button" class="step-btn" data-step="1" data-player="' + esc(p.id) + '" aria-label="Increase ' + esc(p.name) + ' score">＋</button>' +
         '</div></div>';
     }).join('');
@@ -375,9 +394,9 @@
     var game = store.currentGame();
     if (!game) return;
     game.players.forEach(function (p) {
-      var d = $('[data-calc-dutch="' + p.id + '"]');
-      var b = $('[data-calc-blitz="' + p.id + '"]');
-      var r = $('[data-calc-result="' + p.id + '"]');
+      var d = byData('data-calc-dutch', p.id);
+      var b = byData('data-calc-blitz', p.id);
+      var r = byData('data-calc-result', p.id);
       if (d && b && r) r.textContent = '= ' + E.calcScore(d.value, b.value);
     });
   }
@@ -388,7 +407,7 @@
   $('#roundInputs').addEventListener('click', function (e) {
     var btn = e.target.closest('[data-step]');
     if (!btn) return;
-    var input = $('[data-simple="' + btn.getAttribute('data-player') + '"]');
+    var input = byData('data-simple', btn.getAttribute('data-player'));
     if (input) input.value = E.toInt(input.value) + E.toInt(btn.getAttribute('data-step'));
   });
   $$('#roundDialog .mode-btn').forEach(function (b) {
@@ -404,11 +423,11 @@
     if (!game) return prefill;
     game.players.forEach(function (p) {
       if (roundMode === 'simple') {
-        var i = $('[data-simple="' + p.id + '"]');
+        var i = byData('data-simple', p.id);
         if (i && i.value.trim() !== '') prefill[p.id] = { value: E.toInt(i.value) };
       } else {
-        var d = $('[data-calc-dutch="' + p.id + '"]');
-        var b = $('[data-calc-blitz="' + p.id + '"]');
+        var d = byData('data-calc-dutch', p.id);
+        var b = byData('data-calc-blitz', p.id);
         if (d && b && (d.value !== '' || b.value !== '')) {
           prefill[p.id] = { value: E.calcScore(d.value, b.value), dutchCards: E.toInt(d.value), blitzLeft: E.toInt(b.value) };
         }
@@ -417,11 +436,23 @@
     return prefill;
   }
 
+  /** True when the user left every field for this player empty. */
+  function playerFieldsEmpty(playerId) {
+    if (roundMode === 'calc') {
+      var d = byData('data-calc-dutch', playerId);
+      var b = byData('data-calc-blitz', playerId);
+      return (!d || d.value.trim() === '') && (!b || b.value.trim() === '');
+    }
+    var i = byData('data-simple', playerId);
+    return !i || i.value.trim() === '';
+  }
+
   function openRoundDialog(roundId) {
     var game = store.currentGame();
     if (!game) { openNewGameDialog(); return; }
     if (!game.players.length) { toast('Add players first'); openPlayersDialog(); return; }
     editingRoundId = roundId || null;
+    editingOriginalIds = null;
     var prefill = {};
     var mode = store.state.settings.defaultInputMode;
     if (roundId) {
@@ -429,6 +460,8 @@
       if (!round) return;
       $('#roundDialogTitle').textContent = 'Edit round ' + round.index;
       $('#deleteRoundBtn').hidden = false;
+      editingOriginalIds = {};
+      round.scores.forEach(function (rs) { editingOriginalIds[rs.playerId] = true; });
       var calcCount = 0;
       round.scores.forEach(function (rs) {
         if (rs.mode === 'calc') {
@@ -454,17 +487,27 @@
     var game = store.currentGame();
     if (!game) return;
     var hadWinner = E.hasWinner(game);
-    var scores = game.players.map(function (p) {
+    var scores = [];
+    game.players.forEach(function (p) {
+      // Editing an old round: players who joined later and were left blank
+      // stay out of it — their "—" (not in this round) must not become a 0.
+      if (editingRoundId && editingOriginalIds && !editingOriginalIds[p.id] && playerFieldsEmpty(p.id)) return;
       if (roundMode === 'calc') {
-        var d = $('[data-calc-dutch="' + p.id + '"]');
-        var b = $('[data-calc-blitz="' + p.id + '"]');
-        return { playerId: p.id, mode: 'calc', dutchCards: E.toInt(d && d.value), blitzLeft: E.toInt(b && b.value) };
+        var d = byData('data-calc-dutch', p.id);
+        var b = byData('data-calc-blitz', p.id);
+        scores.push({ playerId: p.id, mode: 'calc', dutchCards: E.toInt(d && d.value), blitzLeft: E.toInt(b && b.value) });
+      } else {
+        var i = byData('data-simple', p.id);
+        scores.push({ playerId: p.id, mode: 'simple', value: E.toInt(i && i.value) });
       }
-      var i = $('[data-simple="' + p.id + '"]');
-      return { playerId: p.id, mode: 'simple', value: E.toInt(i && i.value) };
     });
     if (editingRoundId) {
-      E.updateRound(game, editingRoundId, scores);
+      if (!E.updateRound(game, editingRoundId, scores)) {
+        roundDialog.close();
+        renderAll();
+        toast('That round no longer exists — nothing was changed');
+        return;
+      }
       toast('Round updated');
     } else {
       E.addRound(game, scores, Date.now());
@@ -475,38 +518,46 @@
     roundDialog.close();
     renderAll();
     showTab('score');
+    var rows = E.standings(game);
+    if (rows.length) {
+      announce('Round saved. ' + rows[0].player.name + ' leads with ' + rows[0].total + '.');
+    }
+    $('#addRoundBtn').focus();
     if (!hadWinner && E.hasWinner(game)) {
       confetti();
-      var winner = E.standings(game).filter(function (r) { return r.hitTarget; })
+      var winner = rows.filter(function (r) { return r.hitTarget; })
         .map(function (r) { return r.player.name; }).join(' & ');
       toast('🏆 ' + winner + ' reached ' + game.targetScore + '!');
+      announce(winner + ' reached the target of ' + game.targetScore + '.');
     }
   });
 
   $('#deleteRoundBtn').addEventListener('click', function () {
-    var game = store.currentGame();
-    if (!game || !editingRoundId) return;
+    if (!store.currentGame() || !editingRoundId) return;
     confirmAction('Delete this round? Later rounds renumber; attached corrections become standalone (still visible).', 'Delete round')
       .then(function (ok) {
-        if (!ok) return;
+        var game = store.currentGame(); // re-fetch: state may have merged while the dialog was open
+        if (!ok || !game) return;
         E.deleteRound(game, editingRoundId);
         store.touch(game);
         roundDialog.close();
         renderAll();
         toast('Round deleted');
+        announce('Round deleted.');
       });
   });
 
   $('#undoRoundBtn').addEventListener('click', function () {
-    var game = store.currentGame();
-    if (!game || !game.rounds.length) return;
-    confirmAction('Undo round ' + game.rounds.length + '? Its scores are removed.', 'Undo round')
+    var current = store.currentGame();
+    if (!current || !current.rounds.length) return;
+    confirmAction('Undo round ' + current.rounds.length + '? Its scores are removed.', 'Undo round')
       .then(function (ok) {
-        if (!ok) return;
-        E.undoLastRound(game);
+        var game = store.currentGame();
+        if (!ok || !game || !E.undoLastRound(game)) return;
         store.touch(game);
         renderAll();
         toast('Last round undone');
+        announce('Last round undone.');
       });
   });
 
@@ -577,23 +628,28 @@
     if (!input) return;
     var game = store.currentGame();
     if (!game) return;
-    E.renamePlayer(game, input.getAttribute('data-rename'), input.value);
+    var pid = input.getAttribute('data-rename');
+    E.renamePlayer(game, pid, input.value);
     store.touch(game);
-    renderPlayersList();
+    // Sync the field in place (dedupe may have altered the name) instead of
+    // rebuilding the list, which would swallow the click the user is making.
+    var p = game.players.find(function (x) { return x.id === pid; });
+    if (p && input.value !== p.name) input.value = p.name;
     renderAll();
   });
   $('#playersList').addEventListener('click', function (e) {
     var btn = e.target.closest('[data-remove]');
     if (!btn) return;
-    var game = store.currentGame();
-    if (!game) return;
-    var p = game.players.find(function (x) { return x.id === btn.getAttribute('data-remove'); });
+    var current = store.currentGame();
+    if (!current) return;
+    var pid = btn.getAttribute('data-remove');
+    var p = current.players.find(function (x) { return x.id === pid; });
     if (!p) return;
-    if (game.players.length <= 1) { toast('A game needs at least one player'); return; }
+    if (current.players.length <= 1) { toast('A game needs at least one player'); return; }
     confirmAction('Remove ' + p.name + '? Their scores and corrections are removed from this game too.', 'Remove player')
       .then(function (ok) {
-        if (!ok) return;
-        E.removePlayer(game, p.id);
+        var game = store.currentGame();
+        if (!ok || !game || !E.removePlayer(game, pid)) return;
         store.touch(game);
         renderPlayersList();
         renderAll();
@@ -605,8 +661,8 @@
     var game = store.currentGame();
     var name = $('#addPlayerName').value.trim();
     if (!game || !name) return;
-    if (game.players.length >= 8) { toast('8 players max (with expansion)'); return; }
     var p = E.addPlayer(game, name);
+    if (!p) { toast(E.MAX_PLAYERS + ' players max (with expansion)'); return; }
     store.touch(game);
     $('#addPlayerName').value = '';
     renderPlayersList();
@@ -638,11 +694,12 @@
 
   /* ---------- reset ---------- */
   $('#resetBtn').addEventListener('click', function () {
-    var game = store.currentGame();
-    if (!game) return;
-    confirmAction('Reset "' + game.name + '"? All rounds and corrections are cleared. Players and target stay.', 'Reset scores')
+    var current = store.currentGame();
+    if (!current) return;
+    confirmAction('Reset "' + current.name + '"? All rounds and corrections are cleared. Players and target stay.', 'Reset scores')
       .then(function (ok) {
-        if (!ok) return;
+        var game = store.currentGame();
+        if (!ok || !game) return;
         E.resetGame(game);
         store.touch(game);
         renderAll();

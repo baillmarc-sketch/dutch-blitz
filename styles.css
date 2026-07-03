@@ -39,7 +39,7 @@
     --ink-soft: #c4ae8c;
     --line: #0d0905;
     --c-yellow: #e8b23a;
-    --accent: #e05046;
+    --accent: #c8423a;
     --shadow: 0 3px 0 var(--line);
     color-scheme: dark;
   }
@@ -52,7 +52,7 @@
   --ink-soft: #c4ae8c;
   --line: #0d0905;
   --c-yellow: #e8b23a;
-  --accent: #e05046;
+  --accent: #c8423a;
   --shadow: 0 3px 0 var(--line);
   color-scheme: dark;
 }
@@ -149,6 +149,11 @@ main { max-width: 640px; margin: 0 auto; padding: 0 16px; }
 }
 .btn-big { flex: 1; font-size: 1.1em; }
 .btn-row { display: flex; gap: 10px; margin: 14px 0; align-items: center; }
+.sticky-actions {
+  position: sticky; top: 0; z-index: 15;
+  background: var(--cream); padding: 8px 0;
+  margin: 6px 0;
+}
 .btn-row.wrap { flex-wrap: wrap; }
 .btn-row.wrap .btn { flex: 1 1 40%; }
 
@@ -321,6 +326,10 @@ input[type="text"], input[type="number"], select, textarea {
 input.switch { width: 28px; height: 28px; accent-color: var(--accent); }
 
 .form-error { color: var(--c-red); font-weight: 700; }
+:root[data-theme="dark"] .form-error { color: #ff8a80; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .form-error { color: #ff8a80; }
+}
 .form-note { color: var(--ink-soft); font-size: 0.85em; }
 
 /* round entry */

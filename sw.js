@@ -12,12 +12,18 @@ var ASSETS = [
   './icons/icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',
+  './icons/icon-512-maskable.png',
 ];
 
 self.addEventListener('install', function (event) {
   event.waitUntil(
-    caches.open(CACHE).then(function (cache) { return cache.addAll(ASSETS); })
-      .then(function () { return self.skipWaiting(); })
+    caches.open(CACHE).then(function (cache) {
+      // cache:'reload' bypasses the HTTP cache, so a CACHE bump always
+      // fetches fresh bytes instead of re-caching stale ones.
+      return cache.addAll(ASSETS.map(function (url) {
+        return new Request(url, { cache: 'reload' });
+      }));
+    }).then(function () { return self.skipWaiting(); })
   );
 });
 

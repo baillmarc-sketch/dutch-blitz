@@ -35,6 +35,17 @@
     return toInt(dutchCards) - 2 * toInt(blitzLeft);
   }
 
+  /**
+   * Exact inverse of calcScore for a bare value, so switching entry modes never
+   * loses what was typed: value = dutchCards − 2 × blitzLeft always holds.
+   */
+  function toCalcFields(value) {
+    var v = toInt(value);
+    if (v >= 0) return { dutchCards: v, blitzLeft: 0 };
+    var d = (v % 2 !== 0) ? 1 : 0;
+    return { dutchCards: d, blitzLeft: (d - v) / 2 };
+  }
+
   /** Resolve a RoundScore entry (simple or calc mode) to its point value. */
   function scoreValue(rs) {
     if (!rs) return 0;
@@ -73,7 +84,15 @@
     return totals;
   }
 
-  /** Running totals per player after each round index (adjustments attached to a round count at that round; standalone count at the end). */
+  function isStandalone(adj) {
+    return adj.attachedToRoundIndex === null || adj.attachedToRoundIndex === undefined;
+  }
+
+  /**
+   * Running totals per player after each round index. Adjustments attached to
+   * a round count at that round; standalone adjustments count in the final
+   * row, so the last "after:" snapshot always agrees with the leaderboard.
+   */
   function cumulativeByRound(game) {
     var rows = [];
     var running = {};
@@ -93,6 +112,14 @@
       Object.keys(running).forEach(function (k) { snapshot[k] = running[k]; });
       rows.push({ index: round.index, totals: snapshot });
     });
+    if (rows.length) {
+      var last = rows[rows.length - 1].totals;
+      (game.adjustments || []).forEach(function (adj) {
+        if (isStandalone(adj) && Object.prototype.hasOwnProperty.call(last, adj.playerId)) {
+          last[adj.playerId] += toInt(adj.delta);
+        }
+      });
+    }
     return rows;
   }
 
@@ -231,19 +258,26 @@
   }
 
   function undoLastRound(game) {
-    var last = (game.rounds || [])[game.rounds.length - 1];
+    var rounds = game.rounds || [];
+    var last = rounds[rounds.length - 1];
     if (!last) return false;
     return deleteRound(game, last.id);
   }
 
   function addAdjustment(game, playerId, delta, label, attachedToRoundIndex, timestamp) {
+    // An anchor that doesn't point at a real round becomes standalone —
+    // an adjustment must never count toward totals while hidden from history.
+    var anchor = null;
+    if (attachedToRoundIndex !== null && attachedToRoundIndex !== undefined) {
+      var n = toInt(attachedToRoundIndex);
+      if (n >= 1 && n <= (game.rounds || []).length) anchor = n;
+    }
     var adj = {
       id: uid('adj'),
       playerId: playerId,
       delta: toInt(delta),
       label: label || 'Correction',
-      attachedToRoundIndex: (attachedToRoundIndex === null || attachedToRoundIndex === undefined)
-        ? null : toInt(attachedToRoundIndex),
+      attachedToRoundIndex: anchor,
       timestamp: timestamp || 0,
     };
     game.adjustments = (game.adjustments || []).concat([adj]);
@@ -259,7 +293,7 @@
   /** Duplicate names get a numeric suffix so history stays unambiguous. */
   function dedupeName(game, name, excludePlayerId) {
     var base = String(name || '').trim() || 'Player';
-    var taken = {};
+    var taken = Object.create(null); // null-proto so names like "constructor" don't false-match
     (game.players || []).forEach(function (p) {
       if (p.id !== excludePlayerId) taken[p.name.toLowerCase()] = true;
     });
@@ -270,8 +304,10 @@
   }
 
   var PLAYER_COLORS = ['red', 'blue', 'green', 'yellow'];
+  var MAX_PLAYERS = 8; // standard 2–4; expansion pack allows up to 8
 
   function addPlayer(game, name) {
+    if ((game.players || []).length >= MAX_PLAYERS) return null;
     var player = {
       id: uid('player'),
       name: dedupeName(game, name),
@@ -371,8 +407,15 @@
     game.rev = toInt(game.rev);
     game.createdAt = toInt(game.createdAt);
     game.updatedAt = toInt(game.updatedAt);
+    var seenIds = Object.create(null); // null-proto: ids named like Object.prototype keys must not collide
     game.players = (Array.isArray(game.players) ? game.players : [])
       .filter(function (p) { return p && typeof p === 'object'; })
+      .filter(function (p) {
+        // duplicate ids would double-count one player's totals — keep the first
+        if (typeof p.id === 'string' && seenIds[p.id]) return false;
+        if (typeof p.id === 'string') seenIds[p.id] = true;
+        return true;
+      })
       .map(function (p, i) {
         return {
           id: typeof p.id === 'string' ? p.id : uid('player'),
@@ -380,17 +423,22 @@
           color: PLAYER_COLORS.indexOf(p.color) !== -1 ? p.color : PLAYER_COLORS[i % PLAYER_COLORS.length],
         };
       });
-    var validIds = {};
+    var validIds = Object.create(null);
     game.players.forEach(function (p) { validIds[p.id] = true; });
+    // Remember each round's stored index before renumbering, so adjustment
+    // anchors can be remapped to the same round rather than the same number.
+    var indexMap = Object.create(null);
     game.rounds = (Array.isArray(game.rounds) ? game.rounds : [])
       .filter(function (r) { return r && typeof r === 'object'; })
       .map(function (r, i) {
+        var storedIndex = toInt(r.index) >= 1 ? toInt(r.index) : i + 1; // legacy rounds without an index anchor by position
+        if (indexMap[storedIndex] === undefined) indexMap[storedIndex] = i + 1;
         return {
           id: typeof r.id === 'string' ? r.id : uid('round'),
           index: i + 1,
           timestamp: toInt(r.timestamp),
           scores: (Array.isArray(r.scores) ? r.scores : [])
-            .filter(function (rs) { return rs && typeof rs === 'object' && validIds[rs.playerId]; })
+            .filter(function (rs) { return rs && typeof rs === 'object' && validIds[rs.playerId] === true; })
             .map(function (rs) {
               return rs.mode === 'calc'
                 ? { playerId: rs.playerId, mode: 'calc', dutchCards: toInt(rs.dutchCards), blitzLeft: toInt(rs.blitzLeft) }
@@ -399,16 +447,20 @@
         };
       });
     game.adjustments = (Array.isArray(game.adjustments) ? game.adjustments : [])
-      .filter(function (a) { return a && typeof a === 'object' && validIds[a.playerId]; })
+      .filter(function (a) { return a && typeof a === 'object' && validIds[a.playerId] === true; })
       .map(function (a) {
+        var anchor = null;
+        if (a.attachedToRoundIndex !== null && a.attachedToRoundIndex !== undefined) {
+          // unmappable anchors become standalone — visible, never hidden
+          anchor = indexMap[toInt(a.attachedToRoundIndex)] !== undefined
+            ? indexMap[toInt(a.attachedToRoundIndex)] : null;
+        }
         return {
           id: typeof a.id === 'string' ? a.id : uid('adj'),
           playerId: a.playerId,
           delta: toInt(a.delta),
           label: typeof a.label === 'string' ? a.label : 'Correction',
-          attachedToRoundIndex: (a.attachedToRoundIndex === null || a.attachedToRoundIndex === undefined)
-            ? null
-            : Math.min(Math.max(toInt(a.attachedToRoundIndex), 1), game.rounds.length) || null,
+          attachedToRoundIndex: anchor,
           timestamp: toInt(a.timestamp),
         };
       });
@@ -418,7 +470,11 @@
   return {
     uid: uid,
     toInt: toInt,
+    signed: signed,
+    playerName: playerName,
+    isStandalone: isStandalone,
     calcScore: calcScore,
+    toCalcFields: toCalcFields,
     scoreValue: scoreValue,
     roundScoreFor: roundScoreFor,
     playerTotals: playerTotals,
@@ -441,5 +497,6 @@
     seedGame: seedGame,
     sanitizeGame: sanitizeGame,
     PLAYER_COLORS: PLAYER_COLORS,
+    MAX_PLAYERS: MAX_PLAYERS,
   };
 });

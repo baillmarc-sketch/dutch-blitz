@@ -280,8 +280,70 @@ test('sanitizeGame repairs malformed fields without dropping good data', () => {
   assert.strictEqual(g.rounds.length, 1);
   assert.strictEqual(g.rounds[0].scores.length, 1, 'ghost-player score dropped');
   assert.strictEqual(g.rounds[0].scores[0].value, 7);
-  assert.strictEqual(g.adjustments[0].attachedToRoundIndex, 1, 'out-of-range attachment clamped');
+  assert.strictEqual(g.adjustments[0].attachedToRoundIndex, null, 'unmappable attachment becomes standalone (visible)');
   assert.strictEqual(E.sanitizeGame('not an object'), null);
+});
+
+console.log('\n— review-pass regressions —');
+
+test('toCalcFields is an exact inverse of calcScore for any value', () => {
+  for (let v = -25; v <= 25; v++) {
+    const f = E.toCalcFields(v);
+    assert.ok(f.dutchCards >= 0 && f.blitzLeft >= 0, 'fields non-negative for ' + v);
+    assert.strictEqual(E.calcScore(f.dutchCards, f.blitzLeft), v, 'round-trip for ' + v);
+  }
+});
+
+test('undoLastRound tolerates a game with no rounds array', () => {
+  assert.strictEqual(E.undoLastRound({ players: [], adjustments: [] }), false);
+});
+
+test('addAdjustment with an out-of-range anchor becomes standalone (visible), never hidden', () => {
+  const g = E.newGame({ playerNames: ['A'] });
+  E.addRound(g, [{ playerId: g.players[0].id, mode: 'simple', value: 1 }]);
+  const adj = E.addAdjustment(g, g.players[0].id, 5, 'x', 7);
+  assert.strictEqual(adj.attachedToRoundIndex, null);
+  assert.ok(E.exportText(g).includes('Standalone corrections:'), 'must appear in export');
+  assert.strictEqual(totalsByName(g).A, 6);
+});
+
+test('cumulativeByRound final row includes standalone adjustments (matches leaderboard)', () => {
+  const g = E.newGame({ playerNames: ['A'] });
+  E.addRound(g, [{ playerId: g.players[0].id, mode: 'simple', value: 10 }]);
+  E.addAdjustment(g, g.players[0].id, -4, 'penalty', null);
+  const rows = E.cumulativeByRound(g);
+  assert.strictEqual(rows[0].totals[g.players[0].id], 6);
+  assert.strictEqual(E.playerTotals(g)[g.players[0].id], 6);
+});
+
+test('sanitizeGame remaps adjustment anchors by stored round index, not position', () => {
+  const g = E.sanitizeGame({
+    players: [{ id: 'p', name: 'A' }],
+    rounds: [
+      { id: 'r2', index: 2, scores: [{ playerId: 'p', mode: 'simple', value: 1 }] },
+      { id: 'r3', index: 3, scores: [{ playerId: 'p', mode: 'simple', value: 2 }] },
+    ],
+    adjustments: [{ id: 'a', playerId: 'p', delta: 5, attachedToRoundIndex: 2 }],
+  });
+  assert.strictEqual(g.rounds[0].index, 1);
+  assert.strictEqual(g.adjustments[0].attachedToRoundIndex, 1, 'anchor follows the round formerly numbered 2');
+});
+
+test('sanitizeGame drops duplicate player ids and prototype-key ghosts', () => {
+  const g = E.sanitizeGame({
+    players: [{ id: 'x', name: 'A' }, { id: 'x', name: 'B' }],
+    rounds: [{ id: 'r', index: 1, scores: [{ playerId: 'x', mode: 'simple', value: 10 }] }],
+    adjustments: [{ id: 'a', playerId: 'constructor', delta: 7 }],
+  });
+  assert.strictEqual(g.players.length, 1, 'duplicate id kept once');
+  assert.strictEqual(g.adjustments.length, 0, 'ghost playerId "constructor" dropped');
+});
+
+test('addPlayer refuses a 9th player (MAX_PLAYERS)', () => {
+  const g = E.newGame({ playerNames: ['1', '2', '3', '4', '5', '6', '7', '8'] });
+  assert.strictEqual(g.players.length, 8);
+  assert.strictEqual(E.addPlayer(g, 'Nine'), null);
+  assert.strictEqual(g.players.length, 8);
 });
 
 console.log('\n— storage: autosave, merge-not-clobber, corruption —');
@@ -306,8 +368,9 @@ test('corrupted save is backed up, never silently wiped', () => {
   const store = new S.Store(ls, () => 5000);
   store.load();
   assert.ok(store.recoveryNotice, 'user is told');
-  const backup = ls.getItem(S.BACKUP_PREFIX + '5000');
-  assert.strictEqual(backup, '{definitely not json', 'original bytes preserved');
+  const backupKey = Object.keys(ls._data).find((k) => k.startsWith(S.BACKUP_PREFIX));
+  assert.ok(backupKey, 'a backup key exists');
+  assert.strictEqual(ls.getItem(backupKey), '{definitely not json', 'original bytes preserved');
 });
 
 test('stale tab cannot clobber a newer save (monotonic merge)', () => {
@@ -335,6 +398,104 @@ test('stale tab cannot clobber a newer save (monotonic merge)', () => {
   assert.strictEqual(ids.length, 2, 'both games survive: ' + ids.length);
   const kitchen = ids.map((i) => check.state.games[i]).find((g) => g.name === 'Kitchen table');
   assert.strictEqual(kitchen.rounds.length, 2, 'newer rounds not clobbered by stale tab');
+});
+
+test('two tabs adding different rounds to the same game both survive (union merge)', () => {
+  const ls = fakeStorage();
+  const a = new S.Store(ls, () => 1000);
+  a.load();
+  const game = E.newGame({ name: 'G', playerNames: ['P'], createdAt: 1000 });
+  const pid = game.players[0].id;
+  a.addGame(game, true);
+
+  // Tab B loads a snapshot now, before either tab adds its round.
+  const b = new S.Store(ls, () => 2000);
+  b.load();
+
+  // Tab A adds round RA and persists.
+  E.addRound(game, [{ playerId: pid, mode: 'simple', value: 10 }], 1500);
+  a.touch(game);
+
+  // Tab B (stale) adds a different round RB and persists — must merge, not clobber.
+  const bGame = b.currentGame();
+  E.addRound(bGame, [{ playerId: pid, mode: 'simple', value: 7 }], 2500);
+  b.touch(bGame);
+
+  const check = new S.Store(ls, () => 3000);
+  check.load();
+  const merged = check.currentGame();
+  assert.strictEqual(merged.rounds.length, 2, 'both rounds survive: got ' + merged.rounds.length);
+  assert.deepStrictEqual(merged.rounds.map((r) => r.index), [1, 2]);
+  assert.strictEqual(E.playerTotals(merged)[pid], 17);
+});
+
+test('deleted game stays deleted across tabs (tombstones)', () => {
+  const ls = fakeStorage();
+  const a = new S.Store(ls, () => 1000);
+  a.load();
+  const game = E.newGame({ name: 'Doomed', playerNames: ['P'], createdAt: 1000 });
+  a.addGame(game, true);
+
+  const b = new S.Store(ls, () => 2000);
+  b.load(); // B holds a copy
+
+  a.deleteGame(game.id); // A deletes at t=1000? now() is 1000 for a — use later store
+  // B autosaves something unrelated; its copy of the game must NOT resurrect.
+  const other = E.newGame({ name: 'Other', playerNames: ['Q'], createdAt: 2000 });
+  b.addGame(other, true);
+
+  const check = new S.Store(ls, () => 3000);
+  check.load();
+  const names = Object.keys(check.state.games).map((id) => check.state.games[id].name);
+  assert.ok(names.indexOf('Doomed') === -1, 'tombstoned game resurrected: ' + JSON.stringify(names));
+  assert.ok(names.indexOf('Other') !== -1);
+});
+
+test('settings change in a stale tab survives its own persist (no meta clobber)', () => {
+  const ls = fakeStorage();
+  const a = new S.Store(ls, () => 1000);
+  a.load();
+  const game = E.newGame({ name: 'G', playerNames: ['P'], createdAt: 1000 });
+  a.addGame(game, true);
+  a.touch(game); a.touch(game); // storage rev races ahead
+
+  const b = new S.Store(ls, () => 2000);
+  b.load();
+  b.state.rev = 0; // simulate a long-stale in-memory tab
+  b.updateSettings({ bigType: true });
+  assert.strictEqual(b.state.settings.bigType, true, 'own change not reverted by merge');
+  const check = new S.Store(ls, () => 3000);
+  check.load();
+  assert.strictEqual(check.state.settings.bigType, true, 'change reached storage');
+});
+
+test('failed write rolls the revision back so the guard still merges later', () => {
+  const ls = fakeStorage();
+  const a = new S.Store(ls, () => 1000);
+  a.load();
+  const game = E.newGame({ name: 'G', playerNames: ['P'], createdAt: 1000 });
+  a.addGame(game, true);
+  const revBefore = a.state.rev;
+
+  // Simulate quota failure on the main key only (backup writes would also fail, fine).
+  const realSet = ls.setItem;
+  ls.setItem = () => { throw new Error('QuotaExceededError'); };
+  const ok = a.persist();
+  ls.setItem = realSet;
+  assert.strictEqual(ok, false);
+  assert.strictEqual(a.state.rev, revBefore, 'rev rolled back on failed write');
+  assert.ok(a.recoveryNotice, 'user is told autosave failed');
+});
+
+test('corrupt save with failed backup: notice is honest, original untouched', () => {
+  const ls = fakeStorage();
+  ls.setItem(S.KEY, '{definitely not json');
+  const realSet = ls.setItem.bind(ls);
+  ls.setItem = (k, v) => { if (k.startsWith(S.BACKUP_PREFIX)) throw new Error('quota'); realSet(k, v); };
+  const store = new S.Store(ls, () => 5000);
+  store.load();
+  assert.ok(store.recoveryNotice.indexOf('NOT been touched') !== -1, 'must not claim preservation: ' + store.recoveryNotice);
+  assert.strictEqual(ls.getItem(S.KEY), '{definitely not json', 'original bytes still in place');
 });
 
 test('settings sanitization falls back safely on junk values', () => {

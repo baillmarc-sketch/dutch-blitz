@@ -67,7 +67,8 @@
       <p id="scoreTargetLine" class="target-line"></p>
 
       <h3 class="section-label">Standings</h3>
-      <ol id="leaderboard" class="leaderboard" aria-live="polite" aria-label="Standings, highest first"></ol>
+      <ol id="leaderboard" class="leaderboard" aria-label="Standings, highest first"></ol>
+      <p id="liveAnnounce" class="sr-only" aria-live="polite"></p>
 
       <div class="btn-row sticky-actions">
         <button id="addRoundBtn" class="btn btn-primary btn-big" type="button">＋ Add round</button>
@@ -220,7 +221,7 @@
 <dialog id="roundDialog" class="sheet" aria-labelledby="roundDialogTitle">
   <form class="sheet-form" id="roundForm">
     <h2 id="roundDialogTitle">Add round</h2>
-    <div class="mode-toggle" role="radiogroup" aria-label="Entry mode">
+    <div class="mode-toggle" role="group" aria-label="Entry mode">
       <button type="button" class="mode-btn" data-mode="simple" aria-pressed="true">Simple</button>
       <button type="button" class="mode-btn" data-mode="calc" aria-pressed="false">Calculator</button>
     </div>
@@ -246,7 +247,7 @@
     </label>
     <label class="field">
       <span>Amount (e.g. 3 or -4)</span>
-      <input type="text" id="adjDelta" name="delta" inputmode="numeric" pattern="-?[0-9]*" autocomplete="off" placeholder="+3">
+      <input type="number" id="adjDelta" name="delta" step="1" autocomplete="off" placeholder="3">
     </label>
     <label class="field">
       <span>Reason (optional)</span>

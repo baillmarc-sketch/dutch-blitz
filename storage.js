@@ -1,11 +1,13 @@
 /*
  * Dutch Blitz Sidecar — persistence layer.
- * localStorage only, autosave on every mutation, and two safety rules:
+ * localStorage only, autosave on every mutation, and three safety rules:
  *   1. Merge, never clobber: before each write we re-read the store; if another
- *      tab wrote a newer revision, we merge per-game by revision instead of
- *      overwriting it.
- *   2. Never wipe silently: unparseable data is backed up under a separate key
- *      and reported to the UI before we start fresh.
+ *      tab wrote a newer revision, we merge — per game, rounds and adjustments
+ *      are unioned by id, so two tabs adding rounds both keep their work.
+ *   2. Deletions use tombstones, so a deleted game can't be resurrected by a
+ *      tab that still holds a copy.
+ *   3. Never wipe silently: unparseable data is backed up under a separate key
+ *      (verified!) and reported to the UI before we start fresh.
  * Plain script (no modules) so the app runs from file://.
  */
 (function (global) {
@@ -14,8 +16,10 @@
   var KEY = 'dutch-blitz-sidecar/v1';
   var BACKUP_PREFIX = 'dutch-blitz-sidecar/backup-';
   var VERSION = 1;
+  var MAX_TOMBSTONES = 40;
 
   var Engine = global.BlitzEngine || (typeof require !== 'undefined' ? require('./engine.js') : null);
+  var toInt = Engine.toInt;
 
   function defaultSettings() {
     return {
@@ -31,6 +35,7 @@
       version: VERSION,
       rev: 0,
       games: {},
+      tombstones: {}, // gameId -> deletion timestamp
       currentGameId: null,
       seedLoaded: false,
       settings: defaultSettings(),
@@ -41,7 +46,7 @@
   function sanitizeState(raw) {
     if (!raw || typeof raw !== 'object') return null;
     var state = emptyState();
-    state.rev = Engine.toInt(raw.rev);
+    state.rev = toInt(raw.rev);
     state.seedLoaded = !!raw.seedLoaded;
     if (raw.settings && typeof raw.settings === 'object') {
       var s = raw.settings;
@@ -50,10 +55,16 @@
       state.settings.soundOn = !!s.soundOn;
       state.settings.defaultInputMode = s.defaultInputMode === 'calc' ? 'calc' : 'simple';
     }
+    if (raw.tombstones && typeof raw.tombstones === 'object') {
+      Object.keys(raw.tombstones).forEach(function (id) {
+        var ts = toInt(raw.tombstones[id]);
+        if (ts > 0) state.tombstones[id] = ts;
+      });
+    }
     if (raw.games && typeof raw.games === 'object') {
       Object.keys(raw.games).forEach(function (id) {
         var g = Engine.sanitizeGame(raw.games[id]);
-        if (g) state.games[g.id] = g;
+        if (g && !state.tombstones[g.id]) state.games[g.id] = g;
       });
     }
     if (typeof raw.currentGameId === 'string' && state.games[raw.currentGameId]) {
@@ -62,19 +73,67 @@
     return state;
   }
 
+  function pickNewer(a, b) {
+    if (toInt(b.rev) > toInt(a.rev)) return b;
+    if (toInt(b.rev) === toInt(a.rev) && toInt(b.updatedAt) > toInt(a.updatedAt)) return b;
+    return a;
+  }
+
+  /**
+   * Merge two copies of the same game. The higher-revision copy is the base;
+   * rounds, adjustments, and players the other copy has that the base lacks
+   * are unioned in by id, so concurrent edits in two tabs both survive.
+   * Mutates and returns the base copy (keeping live in-memory references valid).
+   */
+  function mergeGame(a, b) {
+    var base = pickNewer(a, b);
+    var other = base === a ? b : a;
+
+    // Remember which round each side's index numbers refer to, pre-merge.
+    var baseIdxToId = Object.create(null);
+    var otherIdxToId = Object.create(null);
+    (base.rounds || []).forEach(function (r) { baseIdxToId[r.index] = r.id; });
+    (other.rounds || []).forEach(function (r) { otherIdxToId[r.index] = r.id; });
+
+    var haveRound = Object.create(null);
+    (base.rounds || []).forEach(function (r) { haveRound[r.id] = true; });
+    (other.rounds || []).forEach(function (r) {
+      if (!haveRound[r.id]) base.rounds.push(r);
+    });
+    base.rounds.sort(function (x, y) {
+      return (toInt(x.timestamp) - toInt(y.timestamp)) || (toInt(x.index) - toInt(y.index));
+    });
+    var idToNewIndex = Object.create(null);
+    base.rounds.forEach(function (r, i) { r.index = i + 1; idToNewIndex[r.id] = i + 1; });
+
+    function remapAnchor(adj, idxToId) {
+      if (Engine.isStandalone(adj)) return;
+      var rid = idxToId[adj.attachedToRoundIndex];
+      adj.attachedToRoundIndex = (rid && idToNewIndex[rid]) ? idToNewIndex[rid] : null;
+    }
+    var haveAdj = Object.create(null);
+    (base.adjustments || []).forEach(function (adj) { haveAdj[adj.id] = true; remapAnchor(adj, baseIdxToId); });
+    (other.adjustments || []).forEach(function (adj) {
+      if (!haveAdj[adj.id]) { remapAnchor(adj, otherIdxToId); base.adjustments.push(adj); }
+    });
+
+    var havePlayer = Object.create(null);
+    (base.players || []).forEach(function (p) { havePlayer[p.id] = true; });
+    (other.players || []).forEach(function (p) {
+      if (!havePlayer[p.id]) base.players.push(p);
+    });
+
+    base.rev = Math.max(toInt(a.rev), toInt(b.rev));
+    base.updatedAt = Math.max(toInt(a.updatedAt), toInt(b.updatedAt));
+    return base;
+  }
+
   function Store(storage, now) {
     this.storage = storage; // injectable for tests
     this.now = now || function () { return Date.now(); };
     this.state = emptyState();
-    this.recoveryNotice = null; // set when a corrupted save was backed up
-    this.listeners = [];
+    this.recoveryNotice = null; // set when a save had to be recovered or couldn't be written
   }
-
-  Store.prototype.onChange = function (fn) { this.listeners.push(fn); };
-  Store.prototype.emit = function () {
-    var self = this;
-    this.listeners.forEach(function (fn) { fn(self.state); });
-  };
 
   Store.prototype.readRaw = function () {
     try {
@@ -98,7 +157,17 @@
     return { state: state };
   };
 
-  /** Load on startup. Corrupted data is backed up under a timestamped key — never deleted silently. */
+  /** Back up a corrupt raw string. Returns the backup key on verified success, null on failure. */
+  Store.prototype.backupCorrupt = function (raw) {
+    var backupKey = BACKUP_PREFIX + this.now() + '-' + Math.random().toString(36).slice(2, 6);
+    try {
+      this.storage.setItem(backupKey, raw);
+      if (this.storage.getItem(backupKey) === raw) return backupKey;
+    } catch (e) { /* quota — fall through */ }
+    return null;
+  };
+
+  /** Load on startup. Corrupted data is backed up — the notice never claims more than actually happened. */
   Store.prototype.load = function () {
     var raw = this.readRaw();
     var result = this.parseRaw(raw);
@@ -107,12 +176,19 @@
       return this.state;
     }
     if (result.corrupt) {
-      var backupKey = BACKUP_PREFIX + this.now();
-      try { this.storage.setItem(backupKey, raw); } catch (e) { /* quota — nothing more we can do */ }
-      this.recoveryNotice = 'A previous save could not be read. It was preserved under "' +
-        backupKey + '" and a fresh start was created — nothing was deleted.';
-      this.state = emptyState();
-      this.persist();
+      var backupKey = this.backupCorrupt(raw);
+      if (backupKey) {
+        this.recoveryNotice = 'A previous save could not be read. It was preserved under "' +
+          backupKey + '" in this browser’s storage and a fresh start was created — nothing was deleted.';
+        this.state = emptyState();
+        this.persist();
+      } else {
+        this.recoveryNotice = 'A previous save could not be read, and there was no room to back it up. ' +
+          'It has NOT been touched — but recording anything new will overwrite it. ' +
+          'If it matters, copy this browser’s "' + KEY + '" storage value somewhere safe first.';
+        this.state = emptyState();
+        // Deliberately no persist: the corrupt original stays until the user acts.
+      }
       return this.state;
     }
     this.state = result.state;
@@ -120,32 +196,41 @@
   };
 
   /**
-   * Merge another state into ours: per-game the higher revision wins, games
-   * missing on either side are kept. This is the monotonic guard — a stale tab
-   * can add its newer work but can never erase someone else's.
+   * Merge another state into ours. Games merge by id (see mergeGame);
+   * tombstones union in and suppress resurrected deletes. Settings and
+   * currentGameId are adopted only when adoptMeta is true (i.e. when
+   * refreshing FROM storage) — a tab persisting its own change must never
+   * have that change reverted by a merely-newer global revision.
    */
-  Store.prototype.mergeFrom = function (other) {
+  Store.prototype.mergeFrom = function (other, adoptMeta) {
     var mine = this.state;
-    var self = this;
+
+    Object.keys(other.tombstones || {}).forEach(function (id) {
+      mine.tombstones[id] = Math.max(toInt(mine.tombstones[id]), toInt(other.tombstones[id]));
+    });
+
     Object.keys(other.games).forEach(function (id) {
       var theirs = other.games[id];
+      if (mine.tombstones[id] && toInt(mine.tombstones[id]) >= toInt(theirs.updatedAt)) return;
       var ours = mine.games[id];
-      if (!ours || Engine.toInt(theirs.rev) > Engine.toInt(ours.rev) ||
-          (Engine.toInt(theirs.rev) === Engine.toInt(ours.rev) &&
-           Engine.toInt(theirs.updatedAt) > Engine.toInt(ours.updatedAt))) {
-        mine.games[id] = theirs;
-      }
+      mine.games[id] = ours ? mergeGame(ours, theirs) : theirs;
     });
-    if (Engine.toInt(other.rev) > Engine.toInt(mine.rev)) {
+    // Apply tombstones we just learned about to games we still hold.
+    Object.keys(mine.tombstones).forEach(function (id) {
+      var g = mine.games[id];
+      if (g && toInt(mine.tombstones[id]) >= toInt(g.updatedAt)) delete mine.games[id];
+    });
+
+    if (adoptMeta && toInt(other.rev) > toInt(mine.rev)) {
       mine.settings = other.settings;
       if (other.currentGameId && mine.games[other.currentGameId]) {
         mine.currentGameId = other.currentGameId;
       }
-      mine.rev = Engine.toInt(other.rev);
     }
+    mine.rev = Math.max(toInt(mine.rev), toInt(other.rev));
     mine.seedLoaded = mine.seedLoaded || other.seedLoaded;
     if (!mine.currentGameId || !mine.games[mine.currentGameId]) {
-      mine.currentGameId = self.newestGameId();
+      mine.currentGameId = this.newestGameId();
     }
   };
 
@@ -153,7 +238,7 @@
     var games = this.state.games;
     var best = null;
     Object.keys(games).forEach(function (id) {
-      if (!best || Engine.toInt(games[id].updatedAt) > Engine.toInt(games[best].updatedAt)) best = id;
+      if (!best || toInt(games[id].updatedAt) > toInt(games[best].updatedAt)) best = id;
     });
     return best;
   };
@@ -162,29 +247,42 @@
   Store.prototype.persist = function () {
     var raw = this.readRaw();
     var result = this.parseRaw(raw);
-    if (result && result.state && Engine.toInt(result.state.rev) > Engine.toInt(this.state.rev)) {
-      this.mergeFrom(result.state);
+    if (result && result.corrupt) {
+      // Someone corrupted the key since we loaded — preserve it before writing over it.
+      this.backupCorrupt(raw);
     }
-    this.state.rev = Engine.toInt(this.state.rev) + 1;
+    if (result && result.state && toInt(result.state.rev) > toInt(this.state.rev)) {
+      this.mergeFrom(result.state, false);
+    }
+    var prevRev = this.state.rev;
+    this.state.rev = toInt(this.state.rev) + 1;
     this.state.version = VERSION;
+    this.pruneTombstones();
     try {
       this.storage.setItem(KEY, JSON.stringify(this.state));
       return true;
     } catch (e) {
-      // Quota exceeded or storage unavailable: keep running in memory, tell the UI.
+      // Quota exceeded or storage blocked: roll the revision back so the
+      // monotonic guard still merges correctly on the next successful write.
+      this.state.rev = prevRev;
       this.recoveryNotice = 'Autosave failed (storage full or blocked). Scores are kept in memory — export them as text to be safe.';
       return false;
     }
+  };
+
+  Store.prototype.pruneTombstones = function () {
+    var t = this.state.tombstones;
+    var ids = Object.keys(t);
+    if (ids.length <= MAX_TOMBSTONES) return;
+    ids.sort(function (x, y) { return t[x] - t[y]; }); // oldest first
+    ids.slice(0, ids.length - MAX_TOMBSTONES).forEach(function (id) { delete t[id]; });
   };
 
   /** Re-read from storage (e.g. on the cross-tab 'storage' event) and merge in whatever is newer. */
   Store.prototype.refreshFromStorage = function () {
     var result = this.parseRaw(this.readRaw());
     if (result && result.state) {
-      if (Engine.toInt(result.state.rev) >= Engine.toInt(this.state.rev)) {
-        this.mergeFrom(result.state);
-      }
-      this.emit();
+      this.mergeFrom(result.state, toInt(result.state.rev) >= toInt(this.state.rev));
     }
   };
 
@@ -196,13 +294,13 @@
 
   Store.prototype.touch = function (game) {
     game.updatedAt = this.now();
-    game.rev = Engine.toInt(game.rev) + 1;
+    game.rev = toInt(game.rev) + 1;
     this.persist();
-    this.emit();
   };
 
   Store.prototype.addGame = function (game, makeCurrent) {
     this.state.games[game.id] = game;
+    delete this.state.tombstones[game.id];
     if (makeCurrent !== false) this.state.currentGameId = game.id;
     this.touch(game);
     return game;
@@ -212,25 +310,23 @@
     if (this.state.games[gameId]) {
       this.state.currentGameId = gameId;
       this.persist();
-      this.emit();
     }
   };
 
   Store.prototype.deleteGame = function (gameId) {
     if (!this.state.games[gameId]) return;
     delete this.state.games[gameId];
+    this.state.tombstones[gameId] = this.now();
     if (this.state.currentGameId === gameId) {
       this.state.currentGameId = this.newestGameId();
     }
     this.persist();
-    this.emit();
   };
 
   Store.prototype.updateSettings = function (patch) {
     var s = this.state.settings;
     Object.keys(patch).forEach(function (k) { s[k] = patch[k]; });
     this.persist();
-    this.emit();
   };
 
   /** First-run seed: the sample game from the brief (also the regression fixture). */
@@ -252,6 +348,7 @@
     defaultSettings: defaultSettings,
     emptyState: emptyState,
     sanitizeState: sanitizeState,
+    mergeGame: mergeGame,
   };
 
   if (typeof module !== 'undefined' && module.exports) {
