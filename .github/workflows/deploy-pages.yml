@@ -42,7 +42,15 @@ jobs:
           touch /tmp/site/.nojekyll
           # Stamp the service-worker cache name with the commit SHA so every
           # deploy changes sw.js bytes and installed clients pick up the update.
-          sed -i "s/blitz-sidecar-v1/blitz-sidecar-${GITHUB_SHA::12}/" /tmp/site/sw.js
+          V="${GITHUB_SHA::12}"
+          sed -i "s/blitz-sidecar-v1/blitz-sidecar-${V}/" /tmp/site/sw.js
+          # Version-stamp asset URLs in the HTML and the SW precache list, so a
+          # freshly deployed page can never pair with a CDN-stale asset (the
+          # Pages CDN caches per-URL for 10 minutes; a new query string is a new URL).
+          for f in styles.css engine.js storage.js app.js manifest.webmanifest; do
+            sed -i "s|\"$f\"|\"$f?v=${V}\"|g" /tmp/site/index.html
+            sed -i "s|'./$f'|'./$f?v=${V}'|g" /tmp/site/sw.js
+          done
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout --orphan gh-pages

@@ -72,6 +72,8 @@
       <ol id="leaderboard" class="leaderboard" aria-label="Standings, highest first"></ol>
       <p id="liveAnnounce" class="sr-only" aria-live="polite"></p>
 
+      <div id="winnerBanner" class="winner-banner" hidden></div>
+
       <div class="btn-row sticky-actions">
         <button id="addRoundBtn" class="btn btn-primary btn-big" type="button">＋ Add round</button>
         <button id="addAdjBtn" class="btn btn-outline" type="button">± Correction</button>
@@ -99,18 +101,19 @@
 
     <h3>Back at the table? The 20-second refresher</h3>
     <ul class="quick-start">
-      <li><b>Deal:</b> Blitz pile 10 · Post piles 3 (5 with two players) · rest in hand</li>
-      <li><b>Wood pile:</b> flip your hand <b>3</b> at a time</li>
-      <li><b>Dutch piles:</b> build 1 → 10 by color in the middle — anyone can play</li>
+      <li><b>Deal:</b> Blitz pile 10 cards · 3 Post piles of 1 card (5 piles with 2 players) · the rest stays in your hand</li>
+      <li><b>Wood pile:</b> flip <b>3</b> cards at a time from your hand onto it</li>
+      <li><b>Post piles:</b> build <b>down</b>, alternating boy (red/blue) and girl (yellow/green)</li>
+      <li><b>Dutch piles</b> (shared, in the middle)<b>:</b> build 1 → 10 by color — anyone may play</li>
       <li><b>Round ends:</b> empty your Blitz pile, yell <em>“Blitz!”</em></li>
-      <li><b>Score:</b> +1 per Dutch card · −2 per Blitz leftover</li>
+      <li><b>Score:</b> +1 per card played to Dutch piles · −2 per card left in Blitz</li>
       <li><b>Win:</b> first to 75</li>
     </ul>
 
-    <figure class="table-map" role="img" aria-label="Table layout: Dutch piles sit in the middle and build 1 to 10 by color. At your spot: 3 Post piles, a Blitz pile of 10 cards, and your Wood pile in hand, flipped 3 at a time.">
+    <figure class="table-map" role="img" aria-label="Table layout: Dutch piles sit in the middle and build 1 to 10 by color. At your spot: 3 Post piles building down with alternating boy and girl cards, a Blitz pile of 10 cards, and your hand, flipped 3 cards at a time onto your Wood pile.">
       <svg viewBox="0 0 360 258" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
         <!-- THE MIDDLE -->
-        <text x="14" y="18" class="map-section">THE MIDDLE</text>
+        <text x="14" y="18" class="map-section">THE MIDDLE — DUTCH PILES</text>
         <g transform="translate(30 26)">
           <rect width="44" height="60" rx="6" fill="var(--c-red)" class="map-stroke"/>
           <text x="22" y="40" class="map-num" fill="#fffaf0">1</text>
@@ -128,7 +131,7 @@
           <text x="22" y="40" class="map-num" fill="#2e2013">10</text>
         </g>
         <text x="322" y="62" class="map-hint">↑</text>
-        <text x="180" y="104" class="map-label" text-anchor="middle">DUTCH PILES · BUILD 1 → 10 BY COLOR</text>
+        <text x="180" y="104" class="map-label" text-anchor="middle">BUILD 1 → 10 BY COLOR · ANYONE MAY PLAY</text>
 
         <line x1="14" y1="118" x2="346" y2="118" class="map-divider"/>
 
@@ -139,7 +142,7 @@
           <rect x="40" width="34" height="48" rx="5" class="map-outline"/>
           <rect x="80" width="34" height="48" rx="5" class="map-outline"/>
           <text x="57" y="68" class="map-label" text-anchor="middle">POST × 3</text>
-          <text x="57" y="82" class="map-sub" text-anchor="middle">build down</text>
+          <text x="57" y="82" class="map-sub" text-anchor="middle">down · boy/girl/boy</text>
         </g>
         <g transform="translate(168 148)">
           <rect x="8" y="8" width="40" height="52" rx="5" class="map-back"/>
@@ -159,7 +162,7 @@
               <text x="17" y="32" class="map-num" fill="var(--ink)">3</text>
             </g>
           </g>
-          <text x="44" y="80" class="map-label" text-anchor="middle">WOOD</text>
+          <text x="44" y="80" class="map-label" text-anchor="middle">HAND → WOOD</text>
           <text x="44" y="94" class="map-sub" text-anchor="middle">flip 3 at a time</text>
         </g>
       </svg>
@@ -179,7 +182,7 @@
       <dt>Post piles</dt>
       <dd>Your <strong>3 face-up cards</strong> (working piles) next to the Blitz pile. In a 2-player game you use 5.</dd>
       <dt>Wood pile</dt>
-      <dd>The rest of your deck, held in hand face down. You flip through it <strong>three cards at a time</strong>; only the top flipped card is playable.</dd>
+      <dd>The face-up stack you build next to your Blitz pile. Hold the rest of your deck face down in your hand and flip <strong>3 cards at a time</strong> onto the Wood pile; only its top card is playable.</dd>
       <dt>Dutch piles</dt>
       <dd>The shared piles in the middle of the table. Every <strong>1</strong> starts a new pile; each builds <strong>1 → 10 in a single color</strong>. Cards played here score points.</dd>
     </dl>
@@ -188,7 +191,7 @@
     <ol>
       <li>Deal yourself a <strong>Blitz pile</strong>: 10 cards, face up, in one stack.</li>
       <li>Lay out <strong>3 Post piles</strong>: one card each, face up (5 in a 2-player game).</li>
-      <li>Hold the rest face down — that's your <strong>Wood pile</strong>.</li>
+      <li>Hold the rest face down in your hand — you'll flip it <strong>3 cards at a time</strong> onto your <strong>Wood pile</strong>.</li>
       <li>Leave the middle of the table clear for the Dutch piles.</li>
     </ol>
 
@@ -198,7 +201,7 @@
       <li>Any <strong>1</strong> you can play goes to the center to start a Dutch pile. Build Dutch piles <strong>upward, 1 → 10, same color only</strong>. Anyone can play on any Dutch pile.</li>
       <li>On your own <strong>Post piles</strong>, build <strong>downward</strong> — each card one lower than the card under it, and <strong>alternating boy/girl</strong> (red/blue on yellow/green and vice-versa).</li>
       <li>Fill an empty Post slot with the top card of your Blitz pile.</li>
-      <li>No move? Flip the next <strong>three</strong> cards off your Wood pile. When the hand runs out, pick the flipped stack back up, turn it over, and keep going — <strong>no shuffling</strong>.</li>
+      <li>No move? Count off <strong>3</strong> cards from your hand and turn the packet over onto your Wood pile — the third card counted lands on top, face up, and only it is playable. When your hand runs out, pick the Wood pile back up, turn it over, and keep going — <strong>no shuffling</strong>.</li>
       <li>The moment a player's Blitz pile is empty they shout <strong>“Blitz!”</strong> — all play stops immediately and the round is scored.</li>
     </ol>
 
@@ -212,32 +215,33 @@
 
     <h3>Edge cases</h3>
     <ul>
-      <li><strong>Mistake on the table?</strong> Any player who spots an illegal play calls <strong>“Dutch!”</strong> — the card goes back and play continues.</li>
+      <li><strong>Mistake on the table?</strong> Any player who spots an illegal play calls <strong>“Dutch!”</strong> — everyone stops immediately and leaves the cards untouched while the misplaced card is returned (no penalty), then play resumes.</li>
       <li>Only the <strong>top card</strong> of the Blitz pile, the flipped Wood stack, or a Post pile may be played. No digging.</li>
       <li>Flipping the Wood pile other than in threes, or shuffling it mid-round, is not allowed.</li>
       <li>Two cards race to the same Dutch pile? The one that lands first stays; the other goes back.</li>
-      <li><strong>Everybody stuck with no plays?</strong> The boxed rulebook covers restart procedures — follow it for disputes rather than this summary.</li>
+      <li><strong>One hand only.</strong> Cards may only be placed with one hand (holding your hand-stack in the other is fine).</li>
+      <li><strong>Everybody stuck with no plays?</strong> Each player takes the top card of the cards in their hand and moves it to the bottom — that changes what the count-of-3 reveals — then play continues.</li>
     </ul>
 
     <h3>Variations</h3>
     <ul>
       <li><strong>Casual target:</strong> play to a lower target (or a fixed number of rounds) for shorter games — this app lets you set any target.</li>
       <li><strong>Timed rounds:</strong> stop at a timer instead of a Blitz call, then score as usual.</li>
-      <li><strong>Expansion pack:</strong> adds four more decks for 5–8 players. Chaos scales accordingly.</li>
+      <li><strong>Expansion pack:</strong> adds 4 more decks, allowing 5–8 players.</li>
     </ul>
   </section>
 
   <!-- ============ GUIDE ============ -->
   <section id="panel-guide" class="panel prose" role="tabpanel" aria-labelledby="tab-guide" hidden>
     <h2>Beginner cheat-sheet</h2>
-    <p>Seven things that separate “learning” from “losing politely.”</p>
+    <p>7 habits that matter most for first-time players.</p>
     <ol class="cheat-list">
       <li><strong>Clear your Blitz pile first. Always.</strong> It's the only pile that punishes you (−2 a card). Every move should serve it.</li>
       <li><strong>Don't tunnel on the Wood pile.</strong> Flipping threes feels productive. It isn't, if your Blitz card was playable the whole time.</li>
-      <li><strong>Scan the center constantly.</strong> Dutch piles change every second. The 4 you needed two seconds ago is buried now — but a new one just opened.</li>
-      <li><strong>Use Post piles to free Blitz cards.</strong> Can't play your Blitz card to the center? Park it on a Post pile (one lower, boy-on-girl) and unblock the pile.</li>
+      <li><strong>Scan the Dutch piles constantly.</strong> They change every second. The 4 you needed two seconds ago is buried now — but a new one just opened.</li>
+      <li><strong>Use Post piles to free Blitz cards.</strong> If your Blitz card cannot go to a Dutch pile, place it on a Post pile — exactly 1 lower than that pile's top card, opposite boy/girl group — to expose the next Blitz card.</li>
       <li><strong>Keep your hands moving — legally.</strong> Speed wins rounds, but an illegal play gets a “Dutch!” called on you and costs more time than it saves.</li>
-      <li><strong>Negative rounds happen early. Accept them.</strong> A −6 while you learn the flow is tuition, not failure. The score tracker doesn't judge.</li>
+      <li><strong>Expect negative rounds at first.</strong> They are normal while learning; enter them like any other score.</li>
       <li><strong>Accuracy first, speed second.</strong> Fast and wrong loses to steady and clean. Speed comes on its own after a few rounds.</li>
     </ol>
   </section>
@@ -291,9 +295,9 @@
       <button type="button" class="mode-btn" data-mode="simple" aria-pressed="true">Simple</button>
       <button type="button" class="mode-btn" data-mode="calc" aria-pressed="false">Calculator</button>
     </div>
-    <p class="mode-hint" data-for="simple">Type each player's score — negatives welcome.</p>
-    <p class="mode-hint" data-for="calc" hidden>Just count cards — we do the math.</p>
-    <p class="score-reminder">Cards played <b>+1</b> each · Blitz leftovers <b>−2</b> each</p>
+    <p class="mode-hint" data-for="simple">Enter each player's total round score. Negative numbers are allowed.</p>
+    <p class="mode-hint" data-for="calc" hidden>Enter cards played to Dutch piles and cards left in the Blitz pile — the score is calculated automatically.</p>
+    <p class="score-reminder">Played to Dutch piles <b>+1</b> each · left in Blitz pile <b>−2</b> each</p>
     <div id="roundInputs"></div>
     <p class="form-note">Empty fields count as 0.</p>
     <div class="btn-row" id="deleteRoundRow" hidden>
