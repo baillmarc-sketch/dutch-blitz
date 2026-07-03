@@ -25,7 +25,7 @@
     <line x1="38" y1="34" x2="82" y2="34" stroke="var(--line)" stroke-width="3"/>
     <line x1="38" y1="52" x2="82" y2="52" stroke="var(--line)" stroke-width="3"/>
     <line x1="38" y1="70" x2="82" y2="70" stroke="var(--line)" stroke-width="3"/>
-    <ellipse cx="60" cy="52" rx="19" ry="13" fill="none" stroke="var(--accent)" stroke-width="4" transform="rotate(-4 60 52)"/>
+    <ellipse cx="62" cy="52" rx="15" ry="10" fill="none" stroke="var(--accent)" stroke-width="3" stroke-dasharray="55 8" stroke-linecap="round" transform="rotate(-6 62 52)"/>
   </svg>
   <svg class="hex-sign mark-folk" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
     <circle cx="50" cy="50" r="47" fill="var(--cream-deep)" stroke="var(--ink)" stroke-width="5"/>
@@ -65,7 +65,7 @@
   <!-- ============ SCORES ============ -->
   <section id="panel-score" class="panel" role="tabpanel" aria-labelledby="tab-score" hidden>
     <div id="scoreEmpty" class="empty-state" hidden>
-      <p class="empty-art" aria-hidden="true">🃏</p>
+      <p class="empty-art" aria-hidden="true"><span class="dot red"></span> <span class="dot blue"></span> <span class="dot green"></span> <span class="dot yellow"></span></p>
       <p>No game yet. Start one and the scoreboard lives here.</p>
       <button class="btn btn-primary" type="button" data-action="new-game">Start new game</button>
     </div>
@@ -124,19 +124,19 @@
         <!-- THE MIDDLE -->
         <text x="14" y="18" class="map-section">THE MIDDLE — DUTCH PILES</text>
         <g transform="translate(30 26)">
-          <rect width="44" height="60" rx="6" fill="var(--c-red)" class="map-stroke"/>
+          <rect width="44" height="60" rx="6" class="map-stroke map-fill-red"/>
           <text x="22" y="40" class="map-num" fill="#fffaf0">1</text>
         </g>
         <g transform="translate(104 26)">
-          <rect width="44" height="60" rx="6" fill="var(--c-blue)" class="map-stroke"/>
+          <rect width="44" height="60" rx="6" class="map-stroke map-fill-blue"/>
           <text x="22" y="40" class="map-num" fill="#fffaf0">4</text>
         </g>
         <g transform="translate(178 26)">
-          <rect width="44" height="60" rx="6" fill="var(--c-green)" class="map-stroke"/>
+          <rect width="44" height="60" rx="6" class="map-stroke map-fill-green"/>
           <text x="22" y="40" class="map-num" fill="#fffaf0">7</text>
         </g>
         <g transform="translate(252 26)">
-          <rect width="44" height="60" rx="6" fill="var(--c-yellow)" class="map-stroke"/>
+          <rect width="44" height="60" rx="6" class="map-stroke map-fill-yellow"/>
           <text x="22" y="40" class="map-num" fill="#2e2013">10</text>
         </g>
         <text x="322" y="62" class="map-hint">↑</text>

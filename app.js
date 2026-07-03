@@ -222,14 +222,14 @@
     var host = $('#homeCurrentGame');
     if (!game) {
       host.innerHTML =
-        '<div class="empty-state"><p class="empty-art" aria-hidden="true">🔔</p>' +
+        '<div class="empty-state"><p class="empty-art" aria-hidden="true"><span class="dot red"></span> <span class="dot blue"></span> <span class="dot green"></span> <span class="dot yellow"></span></p>' +
         '<p>No game on the table yet.<br>Start one — it takes ten seconds.</p></div>';
     } else {
       var rows = E.standings(game).map(function (r) {
         return '<li>' + dotHtml(r.player) +
           '<span>' + esc(r.player.name) + '</span>' +
           (r.isLeader ? ' <span class="badge">★ Leader</span>' : '') +
-          (r.hitTarget ? ' <span class="badge win">🏆 ' + game.targetScore + '+</span>' : '') +
+          (r.hitTarget ? ' <span class="badge win">' + game.targetScore + '+</span>' : '') +
           '<span class="total">' + r.total + '</span></li>';
       }).join('');
       host.innerHTML =
@@ -320,7 +320,7 @@
         '<span class="badges">' +
         (delta !== null ? '<span class="delta' + (delta < 0 ? ' neg' : '') + '" title="last round">' + signed(delta) + '</span>' : '') +
         (needs !== null ? '<span class="needs">needs ' + needs + '</span>' : '') +
-        (r.hitTarget ? '<span class="badge win">🏆 Win</span>' : '') +
+        (r.hitTarget ? '<span class="badge win">WIN</span>' : '') +
         '</span>' +
         '<span class="total">' + r.total + '</span></li>';
     }).join('');
@@ -329,7 +329,7 @@
     var winners = rows.filter(function (r) { return r.hitTarget; });
     var banner = $('#winnerBanner');
     if (winners.length && game.rounds.length) {
-      banner.innerHTML = '<span>🏆 ' + winners.map(function (r) { return esc(r.player.name); }).join(' & ') +
+      banner.innerHTML = '<span><span class="win-star">★</span> ' + winners.map(function (r) { return esc(r.player.name); }).join(' & ') +
         ' win' + (winners.length === 1 ? 's' : '') + '!</span>' +
         '<button type="button" class="btn btn-primary" id="rematchBtn">Rematch</button>';
       banner.hidden = false;
@@ -387,7 +387,7 @@
       out.push(
         '<button type="button" class="round-card" data-edit-round="' + esc(round.id) + '">' +
         '<span class="round-head">Round ' + round.index +
-        '<span class="edit-hint">tap to edit ✎</span></span>' +
+        '<span class="edit-hint">tap to edit</span></span>' +
         '<span class="round-scores">' + scores + '</span>' +
         (after ? '<span class="round-scores round-after">after: ' + after + '</span>' : '') +
         '</button>'
@@ -698,7 +698,7 @@
     confetti();
     var winner = E.standings(game).filter(function (r) { return r.hitTarget; })
       .map(function (r) { return r.player.name; }).join(' & ');
-    toast('🏆 ' + winner + ' wins — first to ' + game.targetScore + '!');
+    toast(winner + ' wins — first to ' + game.targetScore + '!');
     announce(winner + ' wins — first to ' + game.targetScore + '.');
   }
 

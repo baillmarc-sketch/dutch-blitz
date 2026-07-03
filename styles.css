@@ -131,7 +131,7 @@ body {
   width: var(--tap); height: var(--tap);
   display: grid; place-items: center;
   background: var(--card); color: var(--ink);
-  border: var(--border) solid var(--edge); border-radius: 50%;
+  border: var(--border) solid var(--edge); border-radius: var(--radius);
   box-shadow: var(--shadow); cursor: pointer;
 }
 .icon-btn svg { width: 24px; height: 24px; }
@@ -150,7 +150,9 @@ main { max-width: 640px; margin: 0 auto; padding: 0 16px; }
 h1, .game-name, .section-label, .btn, .tab, .chip-btn,
 .leaderboard .total, .mini-standings .total, .rank, .delta, .needs,
 .round-scores b, .calc-result, .score-row input, .calc-inputs input,
-.target-line, .game-meta, .demo-chip, .badge, .toast, .mode-btn {
+.target-line, .game-meta, .demo-chip, .badge, .toast, .mode-btn,
+.sheet-form h2, .field > span, .field legend, .calc-inputs label,
+.round-card .round-head {
   font-family: var(--mono);
 }
 .btn-primary, .btn-danger { text-transform: uppercase; letter-spacing: 0.07em; }
@@ -224,16 +226,15 @@ h1, .game-name, .section-label, .btn, .tab, .chip-btn,
 /* ---------- home ---------- */
 .game-card {
   background: var(--card);
-  border: var(--border) solid var(--edge); border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  border: 1px solid var(--line); border-radius: 2px;
   padding: 16px; margin: 12px 0;
 }
 .game-card h2 { margin: 0 0 2px; font-size: 1.2em; }
 .demo-chip {
   display: inline-block; vertical-align: middle; margin-left: 6px;
-  font-size: 0.6em; font-weight: 900; text-transform: uppercase; letter-spacing: 0.05em;
-  border: 2px solid var(--edge); border-radius: 999px; padding: 2px 8px;
-  background: var(--cream-deep); color: var(--ink-soft);
+  font-size: 0.6em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+  border: 1px solid var(--ink-soft); border-radius: 3px; padding: 2px 8px;
+  background: var(--card); color: var(--ink-soft);
 }
 .game-meta { color: var(--ink-soft); font-size: 0.88em; margin: 0 0 10px; }
 .mini-standings { list-style: none; margin: 0; padding: 0; }
@@ -248,7 +249,7 @@ h1, .game-name, .section-label, .btn, .tab, .chip-btn,
 .prev-game {
   display: flex; align-items: stretch; gap: 0;
   background: var(--card);
-  border: 2px solid var(--edge); border-radius: var(--radius);
+  border: 1px solid var(--line); border-radius: 2px;
   margin: 8px 0; min-height: var(--tap); overflow: hidden;
 }
 .prev-game .resume {
@@ -300,7 +301,7 @@ h1, .game-name, .section-label, .btn, .tab, .chip-btn,
   border: 2px solid var(--ink); border-radius: 50%;
   padding: 3px 6px; min-width: 42px;
 }
-.leaderboard li.leader .name::after { content: " ★"; color: var(--accent); }
+.leaderboard li.leader .name::after { content: " ★"; color: var(--ink); }
 .leaderboard li.hit-target { background: color-mix(in srgb, var(--win) 10%, var(--card)); }
 .badge {
   font-size: 0.68em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
@@ -319,13 +320,14 @@ h1, .game-name, .section-label, .btn, .tab, .chip-btn,
 
 .winner-banner {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  border: 2px solid var(--accent); border-radius: var(--radius);
-  background: var(--card);
+  border: 2px solid var(--win); border-radius: var(--radius);
+  background: color-mix(in srgb, var(--win) 10%, var(--card));
   padding: 12px 14px; margin: 12px 0;
   font-weight: 700; font-size: 1.05em;
   font-family: var(--mono);
 }
 .winner-banner .btn { flex: 1 1 100%; }
+.winner-banner .win-star { color: var(--win); }
 
 .dot { /* a colored-pencil stroke, not a gem */
   flex: none; width: 22px; height: 5px; border-radius: 3px; opacity: 0.85;
@@ -380,7 +382,7 @@ dialog.sheet {
   max-height: 92dvh;
 }
 dialog.sheet.small { border-radius: var(--radius); margin: auto; width: calc(100% - 32px); box-shadow: var(--shadow); }
-dialog::backdrop { background: rgba(30, 20, 8, 0.55); }
+dialog::backdrop { background: rgba(12, 15, 21, 0.55); }
 .sheet-form { padding: 18px 18px calc(18px + env(safe-area-inset-bottom)); overflow-y: auto; max-height: 92dvh; }
 .sheet-form h2 {
   margin: 0 0 12px; font-size: 1.2em;
@@ -436,8 +438,8 @@ input.switch:checked::after { transform: translateX(24px); background: var(--acc
 .mode-hint { font-size: 0.85em; color: var(--ink-soft); margin: 8px 0 4px; }
 .score-reminder {
   font-size: 0.85em; text-align: center; margin: 4px 0 8px;
-  border: 2px dashed color-mix(in srgb, var(--ink) 30%, transparent);
-  border-radius: 999px; padding: 6px 10px; color: var(--ink-soft);
+  border: 1px dashed color-mix(in srgb, var(--ink) 30%, transparent);
+  border-radius: 3px; padding: 6px 10px; color: var(--ink-soft);
 }
 .score-reminder b { color: var(--ink); }
 
@@ -457,13 +459,17 @@ input.switch:checked::after { transform: translateX(24px); background: var(--acc
   box-shadow: var(--shadow);
 }
 .table-map svg { display: block; width: 100%; height: auto; }
-.table-map text { font-family: inherit; }
+.table-map text { font-family: var(--mono); }
 .map-section { font-size: 12px; font-weight: 900; letter-spacing: 1px; fill: var(--ink-soft); }
 .map-label { font-size: 11px; font-weight: 900; letter-spacing: 0.5px; fill: var(--ink); }
 .map-sub { font-size: 10px; font-weight: 600; fill: var(--ink-soft); }
 .map-num { font-size: 22px; font-weight: 900; text-anchor: middle; }
 .map-hint { font-size: 22px; font-weight: 900; fill: var(--ink-soft); }
-.map-stroke { stroke: var(--line); stroke-width: 2.5; }
+.map-stroke { stroke: color-mix(in srgb, var(--ink) 30%, transparent); stroke-width: 2; }
+.map-fill-red { fill: color-mix(in srgb, var(--c-red) 80%, var(--card)); }
+.map-fill-blue { fill: color-mix(in srgb, var(--c-blue) 80%, var(--card)); }
+.map-fill-green { fill: color-mix(in srgb, var(--c-green) 80%, var(--card)); }
+.map-fill-yellow { fill: color-mix(in srgb, var(--c-yellow) 80%, var(--card)); }
 .map-outline {
   /* ink-tinted so the empty slots read on the card in BOTH themes,
      never matching the page background */
@@ -486,7 +492,7 @@ input.switch:checked::after { transform: translateX(24px); background: var(--acc
 .step-btn {
   width: var(--tap); height: var(--tap); flex: none;
   font-size: 1.3em; font-weight: 900;
-  border: 2px solid var(--edge); border-radius: 10px;
+  border: 1px solid var(--ink-soft); border-radius: var(--radius);
   background: var(--cream-deep); color: var(--ink); cursor: pointer;
 }
 .step-btn.flip { width: calc(var(--tap) - 10px); font-size: 1.05em; color: var(--ink-soft); }
@@ -546,7 +552,7 @@ input.switch:checked::after { transform: translateX(24px); background: var(--acc
   position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom));
   transform: translateX(-50%) translateY(20px);
   background: var(--ink); color: var(--cream);
-  border-radius: 999px; padding: 10px 18px;
+  border-radius: var(--radius); padding: 10px 18px;
   font-weight: 700; font-size: 0.9em;
   opacity: 0; pointer-events: none;
   transition: opacity .2s, transform .2s;
