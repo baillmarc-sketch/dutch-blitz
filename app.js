@@ -303,7 +303,13 @@
     $('#scoreTargetLine').textContent = 'First to ' + game.targetScore +
       (rows[0] && rows[0].hitTarget ? ' — target reached!' : '');
 
+    // Momentum: each row shows its last-round delta; the leader shows points to target.
+    var lastRound = game.rounds[game.rounds.length - 1] || null;
     $('#leaderboard').innerHTML = rows.map(function (r) {
+      var rs = lastRound ? E.roundScoreFor(lastRound, r.player.id) : null;
+      var delta = rs ? E.scoreValue(rs) : null;
+      var needs = (r.isLeader && !r.hitTarget && game.rounds.length)
+        ? game.targetScore - r.total : null;
       return '<li class="' + (r.isLeader ? 'leader ' : '') + (r.hitTarget ? 'hit-target' : '') + '">' +
         '<span class="rank" aria-hidden="true">' + r.rank + '</span>' +
         dotHtml(r.player) +
@@ -311,11 +317,39 @@
         (r.isLeader ? '<span class="sr-only"> (leader)</span>' : '') +
         (r.hitTarget ? '<span class="sr-only"> (reached target)</span>' : '') + '</span>' +
         '<span class="badges">' +
-        (r.isLeader ? '<span class="badge">★ Leader</span>' : '') +
-        (r.hitTarget ? '<span class="badge win">🏆 Win</span>' : '') +
+        (delta !== null ? '<span class="delta' + (delta < 0 ? ' neg' : '') + '" title="last round">' + signed(delta) + '</span>' : '') +
+        (needs !== null ? '<span class="needs">needs ' + needs + '</span>' : '') +
+        (r.hitTarget ? '<span class="badge win">🏆 Win</span>' : (r.isLeader ? '<span class="badge">★</span>' : '')) +
         '</span>' +
         '<span class="total">' + r.total + '</span></li>';
     }).join('');
+
+    // Winner banner with one-tap rematch — the table says "run it back", not "open a form".
+    var winners = rows.filter(function (r) { return r.hitTarget; });
+    var banner = $('#winnerBanner');
+    if (winners.length && game.rounds.length) {
+      banner.innerHTML = '<span>🏆 ' + winners.map(function (r) { return esc(r.player.name); }).join(' & ') +
+        ' win' + (winners.length === 1 ? 's' : '') + '!</span>' +
+        '<button type="button" class="btn btn-primary" id="rematchBtn">Rematch — same players</button>';
+      banner.hidden = false;
+      $('#rematchBtn').addEventListener('click', function () {
+        var current = store.currentGame();
+        if (!current) return;
+        var next = E.newGame({
+          name: dateGameName(),
+          targetScore: current.targetScore,
+          playerNames: current.players.map(function (p) { return p.name; }),
+          createdAt: Date.now(),
+        });
+        store.addGame(next, true);
+        renderAll();
+        toast('Rematch! Same crew, fresh scores.');
+        announce('Rematch started with the same players.');
+      });
+    } else {
+      banner.hidden = true;
+      banner.innerHTML = '';
+    }
 
     var hasHistory = game.rounds.length || game.adjustments.length;
     $('#historyEmpty').hidden = !!hasHistory;
@@ -471,8 +505,8 @@
         }
         return '<div class="score-row calc"><span class="who">' + dotHtml(p) + '<span>' + esc(p.name) + '</span></span>' +
           '<div class="calc-inputs">' +
-          '<label>Played to Dutch<input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="40" step="1" data-calc-dutch="' + esc(p.id) + '" value="' + (pre.dutchCards !== undefined ? pre.dutchCards : '') + '"></label>' +
-          '<label>Left in Blitz<input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="10" step="1" data-calc-blitz="' + esc(p.id) + '" value="' + (pre.blitzLeft !== undefined ? pre.blitzLeft : '') + '"></label>' +
+          '<label>Played to Dutch piles<input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="40" step="1" data-calc-dutch="' + esc(p.id) + '" value="' + (pre.dutchCards !== undefined ? pre.dutchCards : '') + '"></label>' +
+          '<label>Left in Blitz pile<input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="10" step="1" data-calc-blitz="' + esc(p.id) + '" value="' + (pre.blitzLeft !== undefined ? pre.blitzLeft : '') + '"></label>' +
           '<span class="calc-result" data-calc-result="' + esc(p.id) + '" aria-live="off">= 0</span>' +
           '</div></div>';
       }
@@ -481,6 +515,7 @@
         '<button type="button" class="step-btn" data-step="-1" data-player="' + esc(p.id) + '" aria-label="Decrease ' + esc(p.name) + ' score">−</button>' +
         '<input type="number" step="1" autocomplete="off" data-simple="' + esc(p.id) + '" value="' + (pre.value !== undefined ? pre.value : '') + '" aria-label="' + esc(p.name) + ' round score">' +
         '<button type="button" class="step-btn" data-step="1" data-player="' + esc(p.id) + '" aria-label="Increase ' + esc(p.name) + ' score">＋</button>' +
+        '<button type="button" class="step-btn flip" data-negate="' + esc(p.id) + '" aria-label="Flip sign of ' + esc(p.name) + ' score">±</button>' +
         '</div></div>';
     }).join('');
     if (roundMode === 'calc') updateCalcResults();
@@ -511,6 +546,12 @@
     else e.target.blur();
   });
   $('#roundInputs').addEventListener('click', function (e) {
+    var neg = e.target.closest('[data-negate]');
+    if (neg) {
+      var negInput = byData('data-simple', neg.getAttribute('data-negate'));
+      if (negInput) negInput.value = -E.toInt(negInput.value);
+      return;
+    }
     var btn = e.target.closest('[data-step]');
     if (!btn) return;
     var input = byData('data-simple', btn.getAttribute('data-player'));
@@ -556,6 +597,12 @@
   function openRoundDialog(roundId) {
     var game = store.currentGame();
     if (!game) { openNewGameDialog(); return; }
+    // The sample game only illustrates scoring — real rounds go in a real game.
+    if (game.seed && !roundId) {
+      toast('That was the sample — start your own game!');
+      openNewGameDialog();
+      return;
+    }
     if (!game.players.length) { toast('Add players first'); openPlayersDialog(); return; }
     editingRoundId = roundId || null;
     editingOriginalIds = null;
@@ -619,11 +666,12 @@
       E.addRound(game, scores, Date.now());
       // Instant undo in the toast: right after a save is exactly when
       // someone shouts "wait, I had 3 cards left, not 2".
+      var savedGameId = game.id;
       toast('Round ' + game.rounds.length + ' saved', {
         actionLabel: 'Undo',
         onAction: function () {
           var g = store.currentGame();
-          if (!g || !E.undoLastRound(g)) return;
+          if (!g || g.id !== savedGameId || !E.undoLastRound(g)) return; // never undo into a different game
           store.touch(g);
           renderAll();
           announce('Round undone.');
@@ -640,14 +688,18 @@
       announce('Round saved. ' + rows[0].player.name + ' leads with ' + rows[0].total + '.');
     }
     $('#addRoundBtn').focus();
-    if (!hadWinner && E.hasWinner(game)) {
-      confetti();
-      var winner = rows.filter(function (r) { return r.hitTarget; })
-        .map(function (r) { return r.player.name; }).join(' & ');
-      toast('🏆 ' + winner + ' wins — first to ' + game.targetScore + '!');
-      announce(winner + ' wins — first to ' + game.targetScore + '.');
-    }
+    celebrateIfWon(game, hadWinner);
   });
+
+  /** One celebration for every path that can cross the target: round save, round edit, correction. */
+  function celebrateIfWon(game, hadWinner) {
+    if (hadWinner || !E.hasWinner(game)) return;
+    confetti();
+    var winner = E.standings(game).filter(function (r) { return r.hitTarget; })
+      .map(function (r) { return r.player.name; }).join(' & ');
+    toast('🏆 ' + winner + ' wins — first to ' + game.targetScore + '!');
+    announce(winner + ' wins — first to ' + game.targetScore + '.');
+  }
 
   $('#deleteRoundBtn').addEventListener('click', function () {
     if (!store.currentGame() || !editingRoundId) return;
@@ -721,7 +773,8 @@
     adjDialog.close();
     renderAll();
     toast('Correction saved (' + signed(delta) + ')');
-    if (!hadWinner && E.hasWinner(game)) confetti();
+    announce('Correction saved: ' + E.playerName(game, $('#adjPlayer').value) + ' ' + signed(delta) + '.');
+    celebrateIfWon(game, hadWinner);
   });
 
   /* ---------- players ---------- */
