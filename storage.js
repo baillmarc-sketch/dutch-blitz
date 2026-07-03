@@ -28,6 +28,7 @@
       darkMode: 'auto', // 'auto' | 'light' | 'dark'
       soundOn: false,
       defaultInputMode: 'simple', // 'simple' | 'calc'
+      design: 'ledger', // 'ledger' | 'folk' (the original barn-bright skin)
     };
   }
 
@@ -59,6 +60,7 @@
       state.settings.darkMode = ['auto', 'light', 'dark'].indexOf(s.darkMode) !== -1 ? s.darkMode : 'auto';
       state.settings.soundOn = !!s.soundOn;
       state.settings.defaultInputMode = s.defaultInputMode === 'calc' ? 'calc' : 'simple';
+      state.settings.design = s.design === 'folk' ? 'folk' : 'ledger';
     }
     if (raw.tombstones && typeof raw.tombstones === 'object') {
       Object.keys(raw.tombstones).forEach(function (id) {

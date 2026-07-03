@@ -69,7 +69,7 @@
       btn.type = 'button';
       btn.className = 'btn btn-danger-outline';
       btn.style.marginTop = '8px';
-      btn.textContent = 'Start fresh anyway (overwrites the unreadable save)';
+      btn.textContent = 'Start fresh anyway';
       btn.addEventListener('click', function () {
         confirmAction('Overwrite the unreadable save and start fresh? This cannot be undone.', 'Overwrite')
           .then(function (ok) {
@@ -106,6 +106,7 @@
     if (s.darkMode === 'auto') root.removeAttribute('data-theme');
     else root.setAttribute('data-theme', s.darkMode);
     root.setAttribute('data-bigtype', s.bigType ? 'true' : 'false');
+    root.setAttribute('data-design', s.design === 'folk' ? 'folk' : 'ledger');
   }
 
   /* ---------- toast / sound / confetti ---------- */
@@ -221,14 +222,14 @@
     var host = $('#homeCurrentGame');
     if (!game) {
       host.innerHTML =
-        '<div class="empty-state"><p class="empty-art" aria-hidden="true">🔔</p>' +
+        '<div class="empty-state"><p class="empty-art" aria-hidden="true"><span class="dot red"></span> <span class="dot blue"></span> <span class="dot green"></span> <span class="dot yellow"></span></p>' +
         '<p>No game on the table yet.<br>Start one — it takes ten seconds.</p></div>';
     } else {
       var rows = E.standings(game).map(function (r) {
         return '<li>' + dotHtml(r.player) +
           '<span>' + esc(r.player.name) + '</span>' +
           (r.isLeader ? ' <span class="badge">★ Leader</span>' : '') +
-          (r.hitTarget ? ' <span class="badge win">🏆 ' + game.targetScore + '+</span>' : '') +
+          (r.hitTarget ? ' <span class="badge win">' + game.targetScore + '+</span>' : '') +
           '<span class="total">' + r.total + '</span></li>';
       }).join('');
       host.innerHTML =
@@ -317,9 +318,9 @@
         (r.isLeader ? '<span class="sr-only"> (leader)</span>' : '') +
         (r.hitTarget ? '<span class="sr-only"> (reached target)</span>' : '') + '</span>' +
         '<span class="badges">' +
-        (delta !== null ? '<span class="delta' + (delta < 0 ? ' neg' : '') + '" title="last round">' + signed(delta) + '</span>' : '') +
+        (delta !== null ? '<span class="delta' + (delta < 0 ? ' neg' : (delta > 0 ? ' pos' : '')) + '" title="last round">' + signed(delta) + '</span>' : '') +
         (needs !== null ? '<span class="needs">needs ' + needs + '</span>' : '') +
-        (r.hitTarget ? '<span class="badge win">🏆 Win</span>' : (r.isLeader ? '<span class="badge">★</span>' : '')) +
+        (r.hitTarget ? '<span class="badge win">WIN</span>' : '') +
         '</span>' +
         '<span class="total">' + r.total + '</span></li>';
     }).join('');
@@ -328,9 +329,9 @@
     var winners = rows.filter(function (r) { return r.hitTarget; });
     var banner = $('#winnerBanner');
     if (winners.length && game.rounds.length) {
-      banner.innerHTML = '<span>🏆 ' + winners.map(function (r) { return esc(r.player.name); }).join(' & ') +
+      banner.innerHTML = '<span><span class="win-star">★</span> ' + winners.map(function (r) { return esc(r.player.name); }).join(' & ') +
         ' win' + (winners.length === 1 ? 's' : '') + '!</span>' +
-        '<button type="button" class="btn btn-primary" id="rematchBtn">Rematch — same players</button>';
+        '<button type="button" class="btn btn-primary" id="rematchBtn">Rematch</button>';
       banner.hidden = false;
       $('#rematchBtn').addEventListener('click', function () {
         var current = store.currentGame();
@@ -343,7 +344,7 @@
         });
         store.addGame(next, true);
         renderAll();
-        toast('Rematch! Same crew, fresh scores.');
+        toast('Rematch — same players, fresh sheet');
         announce('Rematch started with the same players.');
       });
     } else {
@@ -386,7 +387,7 @@
       out.push(
         '<button type="button" class="round-card" data-edit-round="' + esc(round.id) + '">' +
         '<span class="round-head">Round ' + round.index +
-        '<span class="edit-hint">tap to edit ✎</span></span>' +
+        '<span class="edit-hint">tap to edit</span></span>' +
         '<span class="round-scores">' + scores + '</span>' +
         (after ? '<span class="round-scores round-after">after: ' + after + '</span>' : '') +
         '</button>'
@@ -697,7 +698,7 @@
     confetti();
     var winner = E.standings(game).filter(function (r) { return r.hitTarget; })
       .map(function (r) { return r.player.name; }).join(' & ');
-    toast('🏆 ' + winner + ' wins — first to ' + game.targetScore + '!');
+    toast(winner + ' wins — first to ' + game.targetScore + '!');
     announce(winner + ' wins — first to ' + game.targetScore + '.');
   }
 
@@ -889,7 +890,7 @@
   $('#shareExportBtn').addEventListener('click', function () {
     var game = store.currentGame();
     if (!game || !navigator.share) return;
-    navigator.share({ title: 'Dutch Blitz — ' + game.name, text: $('#exportText').value })
+    navigator.share({ title: 'Pile On — ' + game.name, text: $('#exportText').value })
       .catch(function () { /* user cancelled the share sheet */ });
   });
   $('#copyExportBtn').addEventListener('click', function () {
@@ -909,12 +910,14 @@
     var s = store.state.settings;
     $('#setBigType').checked = s.bigType;
     $('#setSound').checked = s.soundOn;
+    $('#setDesign').value = s.design || 'ledger';
     $('#setTheme').value = s.darkMode;
     $('#setInputMode').value = s.defaultInputMode;
     $('#settingsDialog').showModal();
   });
   $('#setBigType').addEventListener('change', function (e) { store.updateSettings({ bigType: e.target.checked }); applySettings(); });
   $('#setSound').addEventListener('change', function (e) { store.updateSettings({ soundOn: e.target.checked }); });
+  $('#setDesign').addEventListener('change', function (e) { store.updateSettings({ design: e.target.value }); applySettings(); });
   $('#setTheme').addEventListener('change', function (e) { store.updateSettings({ darkMode: e.target.value }); applySettings(); });
   $('#setInputMode').addEventListener('change', function (e) { store.updateSettings({ defaultInputMode: e.target.value }); });
 

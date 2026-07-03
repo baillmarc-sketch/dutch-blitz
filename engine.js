@@ -172,7 +172,7 @@
   /** Plain-text history export — rounds, corrections (always visible), and final standings. */
   function exportText(game) {
     var lines = [];
-    lines.push('Dutch Blitz — ' + (game.name || 'Game'));
+    lines.push('PILE ON · Dutch Blitz scores — ' + (game.name || 'Game'));
     lines.push('Target: ' + (toInt(game.targetScore) || 75) + ' points');
     lines.push('');
     var cumulative = cumulativeByRound(game);
