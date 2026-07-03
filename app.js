@@ -389,18 +389,26 @@
     return '<label class="field"><span class="sr-only">Player name</span>' +
       '<input type="text" class="new-player-name" maxlength="40" autocomplete="off" placeholder="Player name" value="' + esc(value || '') + '"></label>';
   }
+  /** Games are auto-named from the date; a numeric suffix keeps repeat game nights distinct. */
+  function dateGameName() {
+    var base = new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    var names = Object.keys(store.state.games).map(function (id) { return store.state.games[id].name; });
+    if (names.indexOf(base) === -1) return base;
+    var n = 2;
+    while (names.indexOf(base + ' · game ' + n) !== -1) n += 1;
+    return base + ' · game ' + n;
+  }
+
   function openNewGameDialog() {
     $('#newGameForm').reset();
     $('#newGameTarget').value = '75';
     $('#newGameError').hidden = true;
-    // Prefill only from a game the user actually created — never the demo's fake names.
-    var current = store.currentGame();
-    var names = (current && !current.seed) ? current.players.map(function (p) { return p.name; }) : ['', ''];
-    if (names.length < 2) names = names.concat(['', '']).slice(0, 2);
-    $('#newGamePlayers').innerHTML = names.map(playerRowHtml).join('');
+    // Always blank player fields — typing four names takes seconds; deleting
+    // someone else's takes longer.
+    $('#newGamePlayers').innerHTML = [playerRowHtml(''), playerRowHtml('')].join('');
     newGameDialog.showModal();
-    var firstEmpty = $$('#newGamePlayers input').find(function (i) { return !i.value; });
-    if (firstEmpty) firstEmpty.focus();
+    var first = $('#newGamePlayers input');
+    if (first) first.focus();
   }
   $('#addPlayerRowBtn').addEventListener('click', function () {
     var host = $('#newGamePlayers');
@@ -420,7 +428,7 @@
     var target = E.toInt($('#newGameTarget').value) || 75;
     if (target < 1) target = 75;
     var game = E.newGame({
-      name: $('#newGameName').value.trim() || 'Game night',
+      name: dateGameName(),
       targetScore: target,
       playerNames: names,
       createdAt: Date.now(),
@@ -557,7 +565,7 @@
       var round = game.rounds.find(function (r) { return r.id === roundId; });
       if (!round) return;
       $('#roundDialogTitle').textContent = 'Edit round ' + round.index;
-      $('#deleteRoundBtn').hidden = false;
+      $('#deleteRoundRow').hidden = false;
       editingOriginalIds = {};
       round.scores.forEach(function (rs) { editingOriginalIds[rs.playerId] = true; });
       var calcCount = 0;
@@ -572,7 +580,7 @@
       mode = calcCount > round.scores.length / 2 ? 'calc' : 'simple';
     } else {
       $('#roundDialogTitle').textContent = 'Add round ' + (game.rounds.length + 1);
-      $('#deleteRoundBtn').hidden = true;
+      $('#deleteRoundRow').hidden = true;
     }
     setRoundMode(mode, prefill);
     roundDialog.showModal();
@@ -636,14 +644,14 @@
       confetti();
       var winner = rows.filter(function (r) { return r.hitTarget; })
         .map(function (r) { return r.player.name; }).join(' & ');
-      toast('🏆 ' + winner + ' reached ' + game.targetScore + '!');
-      announce(winner + ' reached the target of ' + game.targetScore + '.');
+      toast('🏆 ' + winner + ' wins — first to ' + game.targetScore + '!');
+      announce(winner + ' wins — first to ' + game.targetScore + '.');
     }
   });
 
   $('#deleteRoundBtn').addEventListener('click', function () {
     if (!store.currentGame() || !editingRoundId) return;
-    confirmAction('Delete this round? Later rounds renumber; attached corrections become standalone (still visible).', 'Delete round')
+    confirmAction('Delete this round? Later rounds renumber, and its corrections stay in history.', 'Delete round')
       .then(function (ok) {
         var game = store.currentGame(); // re-fetch: state may have merged while the dialog was open
         if (!ok || !game) return;
@@ -680,7 +688,7 @@
     $('#adjPlayer').innerHTML = game.players.map(function (p) {
       return '<option value="' + esc(p.id) + '">' + esc(p.name) + '</option>';
     }).join('');
-    var opts = ['<option value="">Standalone (not tied to a round)</option>'];
+    var opts = ['<option value="">Not tied to a round</option>'];
     game.rounds.forEach(function (r) {
       opts.push('<option value="' + r.index + '"' + (r.index === game.rounds.length ? ' selected' : '') + '>Round ' + r.index + '</option>');
     });
@@ -839,7 +847,7 @@
       catch (e) { toast('Select the text and copy manually'); }
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(function () { toast('Copied to clipboard'); }, fallback);
+      navigator.clipboard.writeText(text).then(function () { toast('Copied'); }, fallback);
     } else { fallback(); }
   });
 

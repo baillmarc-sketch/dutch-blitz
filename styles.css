@@ -63,6 +63,7 @@
 :root[data-bigtype="true"] { --fs: 1.22rem; --tap: 58px; }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; } /* author display rules must never resurrect hidden elements */
 
 html { height: 100%; }
 body {
@@ -382,6 +383,20 @@ input.switch:checked::after { transform: translateX(24px); background: var(--acc
 .mode-btn + .mode-btn { border-left: var(--border) solid var(--edge); }
 .mode-btn[aria-pressed="true"] { background: var(--ink); color: var(--cream); }
 .mode-hint { font-size: 0.85em; color: var(--ink-soft); margin: 8px 0 4px; }
+.score-reminder {
+  font-size: 0.85em; text-align: center; margin: 4px 0 8px;
+  border: 2px dashed color-mix(in srgb, var(--ink) 30%, transparent);
+  border-radius: 999px; padding: 6px 10px; color: var(--ink-soft);
+}
+.score-reminder b { color: var(--ink); }
+
+.quick-start {
+  list-style: none; padding: 12px 14px; margin: 8px 0;
+  background: var(--card);
+  border: var(--border) solid var(--edge); border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.quick-start li { margin: 6px 0; padding-left: 0; }
 
 .score-row {
   display: grid; gap: 8px; align-items: center;
