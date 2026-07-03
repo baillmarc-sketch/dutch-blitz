@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f8efdc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#201710" media="(prefers-color-scheme: dark)">
+<meta name="description" content="Phone-first companion for physical Dutch Blitz: quick rules, beginner cheat-sheet, and a fast score tracker.">
+<title>Dutch Blitz Sidecar</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="app-header">
+  <svg class="hex-sign" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+    <circle cx="50" cy="50" r="47" fill="var(--cream-deep)" stroke="var(--ink)" stroke-width="5"/>
+    <g stroke="var(--ink)" stroke-width="3" stroke-linejoin="round">
+      <path d="M50 10 L61 39 L50 50 L39 39 Z" fill="var(--c-red)"/>
+      <path d="M90 50 L61 61 L50 50 L61 39 Z" fill="var(--c-yellow)"/>
+      <path d="M50 90 L39 61 L50 50 L61 61 Z" fill="var(--c-blue)"/>
+      <path d="M10 50 L39 39 L50 50 L39 61 Z" fill="var(--c-green)"/>
+    </g>
+    <circle cx="50" cy="50" r="7" fill="var(--ink)"/>
+  </svg>
+  <div class="app-title">
+    <h1>Dutch Blitz Sidecar</h1>
+    <p class="tagline">Keep it open. Play the cards.</p>
+  </div>
+  <button id="settingsBtn" class="icon-btn" type="button" aria-label="Settings">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm9.4 4a7.6 7.6 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7.5 7.5 0 0 0-2-1.2L16.5 3h-4l-.4 2.6a7.5 7.5 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.7 7.7 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7.5 7.5 0 0 0 2 1.2l.4 2.6h4l.4-2.6a7.5 7.5 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.06-.4.1-.8.1-1.2Z" transform="translate(-1.5 -0.5) scale(1.05)"/></svg>
+  </button>
+</header>
+
+<main id="main">
+
+  <!-- ============ HOME ============ -->
+  <section id="panel-home" class="panel" role="tabpanel" aria-labelledby="tab-home">
+    <div id="recoveryNotice" class="notice warn" hidden></div>
+
+    <div id="homeCurrentGame"><!-- filled by app.js --></div>
+
+    <div class="btn-row">
+      <button id="homeAddRound" class="btn btn-primary btn-big" type="button">＋ Add round</button>
+      <button id="homeNewGame" class="btn btn-outline btn-big" type="button">Start new game</button>
+    </div>
+
+    <div id="homeOtherGames"><!-- previous games list --></div>
+  </section>
+
+  <!-- ============ SCORES ============ -->
+  <section id="panel-score" class="panel" role="tabpanel" aria-labelledby="tab-score" hidden>
+    <div id="scoreEmpty" class="empty-state" hidden>
+      <p class="empty-art" aria-hidden="true">🃏</p>
+      <p>No game yet. Start one and the scoreboard lives here.</p>
+      <button class="btn btn-primary" type="button" data-action="new-game">Start new game</button>
+    </div>
+
+    <div id="scoreContent">
+      <div class="score-head">
+        <h2 id="scoreGameName" class="game-name"></h2>
+        <button id="editGameBtn" class="chip-btn" type="button">Edit game</button>
+      </div>
+      <p id="scoreTargetLine" class="target-line"></p>
+
+      <h3 class="section-label">Standings</h3>
+      <ol id="leaderboard" class="leaderboard" aria-live="polite" aria-label="Standings, highest first"></ol>
+
+      <div class="btn-row sticky-actions">
+        <button id="addRoundBtn" class="btn btn-primary btn-big" type="button">＋ Add round</button>
+        <button id="addAdjBtn" class="btn btn-outline" type="button">± Correction</button>
+      </div>
+
+      <h3 class="section-label">History</h3>
+      <div id="historyEmpty" class="empty-state small" hidden>
+        <p>No rounds yet. When somebody yells <em>“Blitz!”</em>, hit <strong>Add round</strong>.</p>
+      </div>
+      <div id="history" class="history"></div>
+
+      <div class="btn-row wrap">
+        <button id="undoRoundBtn" class="btn btn-outline" type="button">Undo last round</button>
+        <button id="exportBtn" class="btn btn-outline" type="button">Export / copy</button>
+        <button id="playersBtn" class="btn btn-outline" type="button">Players</button>
+        <button id="resetBtn" class="btn btn-danger-outline" type="button">Reset scores</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ RULES ============ -->
+  <section id="panel-rules" class="panel prose" role="tabpanel" aria-labelledby="tab-rules" hidden>
+    <h2>Rules hub</h2>
+    <p class="notice info">Summarized for quick reference. Check the official rules in your box for disputes.</p>
+
+    <h3>The objective</h3>
+    <p>Play as many of your cards as you can onto the shared center piles (the <strong>Dutch piles</strong>), and be the first to empty your <strong>Blitz pile</strong>. Emptying it ends the round — shout <strong>“Blitz!”</strong> and everyone stops instantly. First player to <strong>75 points</strong> across rounds wins the game.</p>
+
+    <h3>Players &amp; decks</h3>
+    <p><strong>2–4 players</strong> with the standard set; the expansion pack takes it up to <strong>8</strong>. Everyone plays simultaneously — there are no turns.</p>
+    <p>Each player uses their own 40-card deck: numbers <strong>1–10</strong> in each of the four colors — <span class="swatch red">red</span>, <span class="swatch blue">blue</span>, <span class="swatch green">green</span>, <span class="swatch yellow">yellow</span>. Decks are told apart by the picture on the back: <em>plow, pail, pump, or carriage</em>. Red and blue cards show a Dutch <strong>boy</strong>; yellow and green cards show a Dutch <strong>girl</strong> — that matters for Post piles.</p>
+
+    <h3>Pile glossary</h3>
+    <dl class="glossary">
+      <dt>Blitz pile</dt>
+      <dd>Your stack of <strong>10 cards, face up</strong>, only the top card playable. Emptying it is the whole point — and ends the round.</dd>
+      <dt>Post piles</dt>
+      <dd>Your <strong>3 face-up cards</strong> (working piles) next to the Blitz pile. In a 2-player game you use 5.</dd>
+      <dt>Wood pile</dt>
+      <dd>The rest of your deck, held in hand face down. You flip through it <strong>three cards at a time</strong>; only the top flipped card is playable.</dd>
+      <dt>Dutch piles</dt>
+      <dd>The shared piles in the middle of the table. Every <strong>1</strong> starts a new pile; each builds <strong>1 → 10 in a single color</strong>. Cards played here score points.</dd>
+    </dl>
+
+    <h3>Setup</h3>
+    <ol>
+      <li>Deal yourself a <strong>Blitz pile</strong>: 10 cards, face up, in one stack.</li>
+      <li>Lay out <strong>3 Post piles</strong>: one card each, face up (5 in a 2-player game).</li>
+      <li>Hold the rest face down — that's your <strong>Wood pile</strong>.</li>
+      <li>Leave the middle of the table clear for the Dutch piles.</li>
+    </ol>
+
+    <h3>The gameplay loop</h3>
+    <ol>
+      <li>Someone says go. Everybody plays <strong>at the same time, as fast as they can</strong> — with one hand placing cards.</li>
+      <li>Any <strong>1</strong> you can play goes to the center to start a Dutch pile. Build Dutch piles <strong>upward, 1 → 10, same color only</strong>. Anyone can play on any Dutch pile.</li>
+      <li>On your own <strong>Post piles</strong>, build <strong>downward</strong> — each card one lower than the card under it, and <strong>alternating boy/girl</strong> (red/blue on yellow/green and vice-versa).</li>
+      <li>Fill an empty Post slot with the top card of your Blitz pile.</li>
+      <li>No move? Flip the next <strong>three</strong> cards off your Wood pile. When the hand runs out, pick the flipped stack back up, turn it over, and keep going — <strong>no shuffling</strong>.</li>
+      <li>The moment a player's Blitz pile is empty they shout <strong>“Blitz!”</strong> — all play stops immediately and the round is scored.</li>
+    </ol>
+
+    <h3>Scoring</h3>
+    <ul>
+      <li><strong>+1 point</strong> for every card you got onto the Dutch piles (sort the center piles by the deck-back picture to count).</li>
+      <li><strong>−2 points</strong> for every card still in your Blitz pile.</li>
+      <li>Yes, <strong>negative rounds are real</strong> and happen to everyone.</li>
+      <li>Totals carry across rounds; first to <strong>75</strong> wins. (This app tracks all of that for you.)</li>
+    </ul>
+
+    <h3>Edge cases</h3>
+    <ul>
+      <li><strong>Mistake on the table?</strong> Any player who spots an illegal play calls <strong>“Dutch!”</strong> — the card goes back and play continues.</li>
+      <li>Only the <strong>top card</strong> of the Blitz pile, the flipped Wood stack, or a Post pile may be played. No digging.</li>
+      <li>Flipping the Wood pile other than in threes, or shuffling it mid-round, is not allowed.</li>
+      <li>Two cards race to the same Dutch pile? The one that lands first stays; the other goes back.</li>
+      <li><strong>Everybody stuck with no plays?</strong> The boxed rulebook covers restart procedures — follow it for disputes rather than this summary.</li>
+    </ul>
+
+    <h3>Variations</h3>
+    <ul>
+      <li><strong>Casual target:</strong> play to a lower target (or a fixed number of rounds) for shorter games — this app lets you set any target.</li>
+      <li><strong>Timed rounds:</strong> stop at a timer instead of a Blitz call, then score as usual.</li>
+      <li><strong>Expansion pack:</strong> adds four more decks for 5–8 players. Chaos scales accordingly.</li>
+    </ul>
+  </section>
+
+  <!-- ============ GUIDE ============ -->
+  <section id="panel-guide" class="panel prose" role="tabpanel" aria-labelledby="tab-guide" hidden>
+    <h2>Beginner cheat-sheet</h2>
+    <p>Seven things that separate “learning” from “losing politely.”</p>
+    <ol class="cheat-list">
+      <li><strong>Clear your Blitz pile first. Always.</strong> It's the only pile that punishes you (−2 a card). Every move should serve it.</li>
+      <li><strong>Don't tunnel on the Wood pile.</strong> Flipping threes feels productive. It isn't, if your Blitz card was playable the whole time.</li>
+      <li><strong>Scan the center constantly.</strong> Dutch piles change every second. The 4 you needed two seconds ago is buried now — but a new one just opened.</li>
+      <li><strong>Use Post piles to free Blitz cards.</strong> Can't play your Blitz card to the center? Park it on a Post pile (one lower, boy-on-girl) and unblock the pile.</li>
+      <li><strong>Keep your hands moving — legally.</strong> Speed wins rounds, but an illegal play gets a “Dutch!” called on you and costs more time than it saves.</li>
+      <li><strong>Negative rounds happen early. Accept them.</strong> A −6 while you learn the flow is tuition, not failure. The score tracker doesn't judge.</li>
+      <li><strong>Accuracy first, speed second.</strong> Fast and wrong loses to steady and clean. Speed comes on its own after a few rounds.</li>
+    </ol>
+  </section>
+
+</main>
+
+<!-- ============ BOTTOM NAV ============ -->
+<nav class="tabbar" aria-label="Sections">
+  <div role="tablist" class="tablist">
+    <button id="tab-home" class="tab" role="tab" aria-selected="true" aria-controls="panel-home" type="button">
+      <span class="tab-icon" aria-hidden="true">⌂</span><span>Home</span>
+    </button>
+    <button id="tab-score" class="tab" role="tab" aria-selected="false" aria-controls="panel-score" type="button">
+      <span class="tab-icon" aria-hidden="true">✎</span><span>Scores</span>
+    </button>
+    <button id="tab-rules" class="tab" role="tab" aria-selected="false" aria-controls="panel-rules" type="button">
+      <span class="tab-icon" aria-hidden="true">☰</span><span>Rules</span>
+    </button>
+    <button id="tab-guide" class="tab" role="tab" aria-selected="false" aria-controls="panel-guide" type="button">
+      <span class="tab-icon" aria-hidden="true">★</span><span>Guide</span>
+    </button>
+  </div>
+</nav>
+
+<!-- ============ DIALOGS ============ -->
+
+<dialog id="newGameDialog" class="sheet" aria-labelledby="newGameTitle">
+  <form method="dialog" class="sheet-form" id="newGameForm">
+    <h2 id="newGameTitle">New game</h2>
+    <label class="field">
+      <span>Game name</span>
+      <input type="text" name="name" id="newGameName" autocomplete="off" maxlength="40" placeholder="Friday night blitz">
+    </label>
+    <label class="field">
+      <span>Target score</span>
+      <input type="number" name="target" id="newGameTarget" inputmode="numeric" value="75" min="1" max="9999">
+    </label>
+    <fieldset class="field">
+      <legend>Players (2–8)</legend>
+      <div id="newGamePlayers"></div>
+      <button type="button" id="addPlayerRowBtn" class="chip-btn">＋ Add player</button>
+    </fieldset>
+    <p id="newGameError" class="form-error" role="alert" hidden></p>
+    <div class="btn-row">
+      <button type="button" class="btn btn-outline" data-close>Cancel</button>
+      <button type="submit" class="btn btn-primary">Start game</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="roundDialog" class="sheet" aria-labelledby="roundDialogTitle">
+  <form class="sheet-form" id="roundForm">
+    <h2 id="roundDialogTitle">Add round</h2>
+    <div class="mode-toggle" role="radiogroup" aria-label="Entry mode">
+      <button type="button" class="mode-btn" data-mode="simple" aria-pressed="true">Simple</button>
+      <button type="button" class="mode-btn" data-mode="calc" aria-pressed="false">Calculator</button>
+    </div>
+    <p class="mode-hint" data-for="simple">Type each player's round score. Negatives welcome.</p>
+    <p class="mode-hint" data-for="calc" hidden>Cards played to Dutch piles, cards left in Blitz pile → score = played − 2 × left.</p>
+    <div id="roundInputs"></div>
+    <p class="form-note">Empty fields count as 0.</p>
+    <div class="btn-row">
+      <button type="button" class="btn btn-outline" data-close>Cancel</button>
+      <button type="button" id="deleteRoundBtn" class="btn btn-danger-outline" hidden>Delete round</button>
+      <button type="submit" class="btn btn-primary">Save round</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="adjDialog" class="sheet" aria-labelledby="adjDialogTitle">
+  <form class="sheet-form" id="adjForm">
+    <h2 id="adjDialogTitle">Score correction</h2>
+    <p class="form-note">Corrections are labeled in history — never hidden.</p>
+    <label class="field">
+      <span>Player</span>
+      <select id="adjPlayer" name="player"></select>
+    </label>
+    <label class="field">
+      <span>Amount (e.g. 3 or -4)</span>
+      <input type="text" id="adjDelta" name="delta" inputmode="numeric" pattern="-?[0-9]*" autocomplete="off" placeholder="+3">
+    </label>
+    <label class="field">
+      <span>Reason (optional)</span>
+      <input type="text" id="adjLabel" name="label" maxlength="60" autocomplete="off" placeholder="Miscounted Dutch pile">
+    </label>
+    <label class="field">
+      <span>Attach to</span>
+      <select id="adjRound" name="round"></select>
+    </label>
+    <p id="adjError" class="form-error" role="alert" hidden></p>
+    <div class="btn-row">
+      <button type="button" class="btn btn-outline" data-close>Cancel</button>
+      <button type="submit" class="btn btn-primary">Save correction</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="playersDialog" class="sheet" aria-labelledby="playersDialogTitle">
+  <div class="sheet-form">
+    <h2 id="playersDialogTitle">Players</h2>
+    <ul id="playersList" class="players-list"></ul>
+    <form id="addPlayerForm" class="add-player-row">
+      <label class="field grow">
+        <span class="sr-only">New player name</span>
+        <input type="text" id="addPlayerName" maxlength="24" autocomplete="off" placeholder="New player name">
+      </label>
+      <button type="submit" class="btn btn-primary">Add</button>
+    </form>
+    <p class="form-note">Players added mid-game score “—” for earlier rounds (counts as 0).</p>
+    <div class="btn-row">
+      <button type="button" class="btn btn-outline" data-close>Done</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="editGameDialog" class="sheet" aria-labelledby="editGameTitle">
+  <form class="sheet-form" id="editGameForm">
+    <h2 id="editGameTitle">Edit game</h2>
+    <label class="field">
+      <span>Game name</span>
+      <input type="text" id="editGameName" maxlength="40" autocomplete="off">
+    </label>
+    <label class="field">
+      <span>Target score (changing mid-game is fine)</span>
+      <input type="number" id="editGameTarget" inputmode="numeric" min="1" max="9999">
+    </label>
+    <div class="btn-row">
+      <button type="button" class="btn btn-outline" data-close>Cancel</button>
+      <button type="submit" class="btn btn-primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="exportDialog" class="sheet" aria-labelledby="exportDialogTitle">
+  <div class="sheet-form">
+    <h2 id="exportDialogTitle">Game history</h2>
+    <textarea id="exportText" class="export-text" rows="12" readonly aria-label="Game history as text"></textarea>
+    <div class="btn-row">
+      <button type="button" class="btn btn-outline" data-close>Close</button>
+      <button type="button" id="copyExportBtn" class="btn btn-primary">Copy to clipboard</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="settingsDialog" class="sheet" aria-labelledby="settingsDialogTitle">
+  <div class="sheet-form">
+    <h2 id="settingsDialogTitle">Settings</h2>
+    <label class="field row">
+      <span>Game-night big type</span>
+      <input type="checkbox" id="setBigType" class="switch">
+    </label>
+    <label class="field row">
+      <span>Sound on round save</span>
+      <input type="checkbox" id="setSound" class="switch">
+    </label>
+    <label class="field">
+      <span>Theme</span>
+      <select id="setTheme">
+        <option value="auto">Match device</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>Default entry mode</span>
+      <select id="setInputMode">
+        <option value="simple">Simple</option>
+        <option value="calc">Calculator</option>
+      </select>
+    </label>
+    <p class="form-note">Everything autosaves to this device. No account, no cloud, works offline.</p>
+    <div class="btn-row">
+      <button type="button" class="btn btn-primary" data-close>Done</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="confirmDialog" class="sheet small" aria-labelledby="confirmTitle">
+  <form method="dialog" class="sheet-form">
+    <h2 id="confirmTitle">Are you sure?</h2>
+    <p id="confirmMessage"></p>
+    <div class="btn-row">
+      <button type="submit" value="cancel" class="btn btn-outline">Cancel</button>
+      <button type="submit" value="ok" id="confirmOkBtn" class="btn btn-danger">Confirm</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<div id="confetti" class="confetti" aria-hidden="true"></div>
+
+<noscript><p class="notice warn">This app needs JavaScript — everything runs locally on your phone.</p></noscript>
+
+<script src="engine.js"></script>
+<script src="storage.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
