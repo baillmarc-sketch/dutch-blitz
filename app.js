@@ -318,7 +318,7 @@
         (r.isLeader ? '<span class="sr-only"> (leader)</span>' : '') +
         (r.hitTarget ? '<span class="sr-only"> (reached target)</span>' : '') + '</span>' +
         '<span class="badges">' +
-        (delta !== null ? '<span class="delta' + (delta < 0 ? ' neg' : '') + '" title="last round">' + signed(delta) + '</span>' : '') +
+        (delta !== null ? '<span class="delta' + (delta < 0 ? ' neg' : (delta > 0 ? ' pos' : '')) + '" title="last round">' + signed(delta) + '</span>' : '') +
         (needs !== null ? '<span class="needs">needs ' + needs + '</span>' : '') +
         (r.hitTarget ? '<span class="badge win">WIN</span>' : '') +
         '</span>' +

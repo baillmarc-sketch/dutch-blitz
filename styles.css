@@ -14,11 +14,12 @@
   --cream-deep: #efecdf;  /* worn paper */
   --card: #fffef7;        /* the sheet */
   --ink: #26323e;
-  --ink-soft: #7b8794;
+  --ink-soft: #5f6b78;
   --line: #d9d5c5;        /* ruled hairline */
   --edge: #d9d5c5;
 
   --accent: #d94f3d;      /* the red margin rule / red pen */
+  --accent-text: #c73a29; /* red that passes AA as text */
   --accent-ink: #fffef7;
   --win: #3f7345;
 
@@ -48,6 +49,7 @@
     --c-green: #7ba384;
     --c-yellow: #d3ac59;
     --accent: #e05a48;
+    --accent-text: #f2907f;
     color-scheme: dark;
   }
 }
@@ -64,6 +66,7 @@
   --c-green: #7ba384;
   --c-yellow: #d3ac59;
   --accent: #e05a48;
+  --accent-text: #f2907f;
   color-scheme: dark;
 }
 
@@ -131,8 +134,8 @@ body {
   width: var(--tap); height: var(--tap);
   display: grid; place-items: center;
   background: var(--card); color: var(--ink);
-  border: var(--border) solid var(--edge); border-radius: var(--radius);
-  box-shadow: var(--shadow); cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--ink) 40%, transparent); border-radius: var(--radius);
+  cursor: pointer;
 }
 .icon-btn svg { width: 24px; height: 24px; }
 .icon-btn:active { transform: translateY(1px); }
@@ -162,9 +165,8 @@ h1, .game-name, .section-label, .btn, .tab, .chip-btn,
   min-height: var(--tap);
   padding: 10px 18px;
   font: inherit; font-family: var(--mono); font-weight: 800;
-  border: var(--border) solid var(--edge);
+  border: 1px solid color-mix(in srgb, var(--ink) 40%, transparent);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
   cursor: pointer;
   background: var(--card); color: var(--ink);
   display: inline-flex; align-items: center; justify-content: center;
@@ -175,9 +177,10 @@ h1, .game-name, .section-label, .btn, .tab, .chip-btn,
 .btn-primary { background: var(--accent); color: var(--accent-ink); }
 .btn-outline { background: var(--card); }
 .btn-danger { background: var(--accent); color: var(--accent-ink); }
-.btn-danger-outline { background: var(--card); color: var(--accent); }
+.btn-danger-outline { background: var(--card); color: var(--accent-text); }
 
-.btn-big { flex: 1; font-size: 1.1em; }
+.btn-big { flex: 1; font-size: 1.1em; white-space: nowrap; }
+:root[data-bigtype="true"] .btn-primary, :root[data-bigtype="true"] .btn-danger { letter-spacing: 0.03em; }
 /* small phones: keep the primary pair on one line, give names room to breathe */
 @media (max-width: 374px) {
   .btn { padding: 10px 10px; }
@@ -277,16 +280,17 @@ h1, .game-name, .section-label, .btn, .tab, .chip-btn,
   border: 1px solid var(--line); border-radius: 2px;
   position: relative;
 }
-.leaderboard::before {
-  content: ""; position: absolute; top: 0; bottom: 0; left: 40px; width: 2px;
-  background: var(--accent); opacity: 0.5;
-}
+
 .leaderboard li {
   display: flex; align-items: center; gap: 10px;
   position: relative;
   padding: 14px 14px 14px 54px;
   border-bottom: 1px solid var(--line);
   font-weight: 700;
+}
+.leaderboard li::before { /* the red margin rule, drawn per row so tints can't cover it */
+  content: ""; position: absolute; top: 0; bottom: 0; left: 40px; width: 2px;
+  background: var(--accent); opacity: 0.5;
 }
 .leaderboard li:last-child { border-bottom: 0; }
 .leaderboard .rank {
@@ -315,7 +319,8 @@ h1, .game-name, .section-label, .btn, .tab, .chip-btn,
   font-size: 0.78em; font-weight: 700; font-variant-numeric: tabular-nums;
   flex: none; color: var(--ink-soft);
 }
-.delta.neg { color: var(--accent); }
+.delta.pos { color: var(--win); }
+.delta.neg { color: var(--accent-text); }
 .needs { font-size: 0.72em; color: var(--ink-soft); flex: none; font-style: italic; }
 
 .winner-banner {
@@ -351,7 +356,7 @@ h1, .game-name, .section-label, .btn, .tab, .chip-btn,
 }
 .round-card .edit-hint { margin-left: auto; color: var(--ink-soft); font-size: 0.78em; font-weight: 600; }
 .round-scores { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.92em; }
-.round-scores .neg { color: var(--accent); font-weight: 800; }
+.round-scores .neg { color: var(--accent-text); font-weight: 800; }
 .round-scores b { font-variant-numeric: tabular-nums; }
 .round-after { margin-top: 4px; color: var(--ink-soft); font-size: 0.82em; }
 
@@ -365,7 +370,7 @@ h1, .game-name, .section-label, .btn, .tab, .chip-btn,
 .adj-card .tag { flex: none; }
 .adj-card .tag {
   font-family: var(--mono); font-size: 0.7em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
-  color: var(--accent); border: 1px solid var(--accent); border-radius: 3px; padding: 2px 7px;
+  color: var(--accent-text); border: 1px solid var(--accent-text); border-radius: 3px; padding: 2px 7px;
 }
 .adj-card .del {
   flex: none; align-self: center; background: none; border: 0; color: var(--ink-soft);
@@ -412,7 +417,7 @@ input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
 input.switch {
   appearance: none; -webkit-appearance: none;
   width: 56px; height: 32px; flex: none;
-  border: var(--border) solid var(--edge); border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--ink) 45%, transparent); border-radius: 999px;
   background: var(--cream); cursor: pointer;
   position: relative; transition: background .15s;
 }
@@ -424,7 +429,7 @@ input.switch::after {
 input.switch:checked { background: var(--accent); }
 input.switch:checked::after { transform: translateX(24px); background: var(--accent-ink); }
 
-.form-error { color: var(--accent); font-weight: 700; }
+.form-error { color: var(--accent-text); font-weight: 700; }
 .form-note { color: var(--ink-soft); font-size: 0.85em; }
 
 /* round entry */
@@ -492,7 +497,7 @@ input.switch:checked::after { transform: translateX(24px); background: var(--acc
 .step-btn {
   width: var(--tap); height: var(--tap); flex: none;
   font-size: 1.3em; font-weight: 900;
-  border: 1px solid var(--ink-soft); border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--ink) 45%, transparent); border-radius: var(--radius);
   background: var(--cream-deep); color: var(--ink); cursor: pointer;
 }
 .step-btn.flip { width: calc(var(--tap) - 10px); font-size: 1.05em; color: var(--ink-soft); }

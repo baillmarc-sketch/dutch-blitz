@@ -736,6 +736,7 @@
 /* ---------- resets: undo the Ledger base's structural additions ---------- */
 :root[data-design="folk"] .leaderboard { background: transparent; border: 0; border-radius: 0; position: static; }
 :root[data-design="folk"] .leaderboard::before { content: none; }
+:root[data-design="folk"] .leaderboard li::before { content: none; }
 :root[data-design="folk"] .leaderboard li { position: relative; padding: 10px 14px; border-bottom: 0; }
 :root[data-design="folk"] .leaderboard li:last-child { border-bottom: 0; }
 :root[data-design="folk"] .leaderboard .rank { position: static; font-size: 1em; color: var(--ink); }
