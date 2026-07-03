@@ -3,7 +3,25 @@
   'use strict';
 
   var E = window.BlitzEngine;
-  var store = new window.BlitzStore.Store(window.localStorage);
+  // Merely touching window.localStorage throws when storage is blocked
+  // (private mode, embedded WebViews) — fall back to an in-memory session.
+  var realStorage = null;
+  try {
+    realStorage = window.localStorage;
+    realStorage.getItem('__probe__');
+  } catch (err) {
+    realStorage = null;
+  }
+  function memoryStorage() {
+    var data = {};
+    return {
+      getItem: function (k) { return Object.prototype.hasOwnProperty.call(data, k) ? data[k] : null; },
+      setItem: function (k, v) { data[k] = String(v); },
+      removeItem: function (k) { delete data[k]; },
+    };
+  }
+  var store = new window.BlitzStore.Store(realStorage || memoryStorage());
+  var storageIsMemoryOnly = !realStorage;
 
   var $ = function (sel) { return document.querySelector(sel); };
   var $$ = function (sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); };
@@ -15,7 +33,12 @@
   }
   var signed = E.signed;
   function cssEsc(s) {
-    return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/["\\\]]/g, '\\$&');
+    if (window.CSS && CSS.escape) return CSS.escape(s);
+    // Fallback: hex-escape everything non-alphanumeric (control chars and
+    // newlines included), mirroring CSS.escape semantics.
+    return String(s).replace(/[^a-zA-Z0-9_-]/g, function (c) {
+      return '\\' + c.charCodeAt(0).toString(16) + ' ';
+    });
   }
   function byData(attr, id) {
     return document.querySelector('[' + attr + '="' + cssEsc(id) + '"]');
@@ -31,10 +54,38 @@
   /* ---------- boot ---------- */
   store.load();
   store.ensureSeed();
-  if (store.recoveryNotice) {
+  if (storageIsMemoryOnly) {
+    store.recoveryNotice = 'This browser is blocking storage, so scores only live until this tab closes. Export as text before you leave!';
+  }
+
+  var lastShownNotice = null;
+  /** Recovery/autosave notices can appear mid-session (quota, corruption) — surface them on every render. */
+  function renderNotice() {
     var rn = $('#recoveryNotice');
+    if (!store.recoveryNotice) { rn.hidden = true; return; }
     rn.textContent = store.recoveryNotice;
+    if (store.writesBlocked) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-danger-outline';
+      btn.style.marginTop = '8px';
+      btn.textContent = 'Start fresh anyway (overwrites the unreadable save)';
+      btn.addEventListener('click', function () {
+        confirmAction('Overwrite the unreadable save and start fresh? This cannot be undone.', 'Overwrite')
+          .then(function (ok) {
+            if (!ok) return;
+            store.allowOverwrite();
+            store.ensureSeed();
+            renderAll();
+          });
+      });
+      rn.appendChild(btn);
+    }
     rn.hidden = false;
+    if (lastShownNotice !== store.recoveryNotice) {
+      lastShownNotice = store.recoveryNotice;
+      toast('⚠ ' + (store.writesBlocked ? 'Saved data needs attention — see Home' : 'Autosave issue — see Home'));
+    }
   }
   applySettings();
   window.addEventListener('storage', function (e) {
@@ -59,12 +110,25 @@
 
   /* ---------- toast / sound / confetti ---------- */
   var toastTimer = null;
-  function toast(msg) {
+  /** opts.actionLabel + opts.onAction add a tappable action (e.g. Undo) to the toast. */
+  function toast(msg, opts) {
     var t = $('#toast');
     t.textContent = msg;
+    if (opts && opts.actionLabel) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'toast-action';
+      btn.textContent = opts.actionLabel;
+      btn.addEventListener('click', function () {
+        t.classList.remove('show');
+        clearTimeout(toastTimer);
+        opts.onAction();
+      });
+      t.appendChild(btn);
+    }
     t.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.classList.remove('show'); }, 2200);
+    toastTimer = setTimeout(function () { t.classList.remove('show'); }, opts && opts.actionLabel ? 6000 : 2200);
   }
 
   function blip() {
@@ -102,6 +166,10 @@
   function confirmAction(message, okLabel) {
     return new Promise(function (resolve) {
       var dlg = $('#confirmDialog');
+      if (typeof dlg.showModal !== 'function') { // ancient browser: never fail silently
+        resolve(window.confirm(message));
+        return;
+      }
       $('#confirmMessage').textContent = message;
       $('#confirmOkBtn').textContent = okLabel || 'Confirm';
       function onClose() {
@@ -143,6 +211,7 @@
 
   function renderAll() {
     applySettings();
+    renderNotice();
     renderHome();
     renderScore();
   }
@@ -164,11 +233,27 @@
       }).join('');
       host.innerHTML =
         '<div class="game-card">' +
-        '<h2>' + esc(game.name) + '</h2>' +
+        '<h2>' + esc(game.name) + (game.seed ? '<span class="demo-chip">Demo</span>' : '') + '</h2>' +
         '<p class="game-meta">' + game.players.length + ' players · first to ' + game.targetScore +
         ' · ' + game.rounds.length + ' round' + (game.rounds.length === 1 ? '' : 's') + ' played</p>' +
         '<ol class="mini-standings" aria-label="Current standings">' + rows + '</ol>' +
+        (game.seed
+          ? '<p class="form-note">This sample shows how scoring works — start your own game and it moves out of the way.</p>' +
+            '<button type="button" class="chip-btn" id="deleteDemoBtn">Remove sample game</button>'
+          : '') +
         '</div>';
+      var demoBtn = $('#deleteDemoBtn');
+      if (demoBtn) {
+        demoBtn.addEventListener('click', function () {
+          confirmAction('Remove the sample game?', 'Remove')
+            .then(function (ok) {
+              if (!ok) return;
+              store.deleteGame(game.id);
+              renderAll();
+              toast('Sample game removed');
+            });
+        });
+      }
     }
 
     var others = Object.keys(store.state.games)
@@ -240,7 +325,7 @@
 
   function adjHtml(adj, game) {
     return '<div class="adj-card"><span class="tag">Correction</span>' +
-      '<span>' + esc(E.playerName(game, adj.playerId)) +
+      '<span class="adj-text">' + esc(E.playerName(game, adj.playerId)) +
       ' <b>' + signed(adj.delta) + '</b>' +
       (adj.label ? ' — ' + esc(adj.label) : '') + '</span>' +
       '<button type="button" class="del" data-del-adj="' + esc(adj.id) + '" aria-label="Delete this correction">✕</button>' +
@@ -269,7 +354,7 @@
         '<span class="round-head">Round ' + round.index +
         '<span class="edit-hint">tap to edit ✎</span></span>' +
         '<span class="round-scores">' + scores + '</span>' +
-        (after ? '<span class="round-scores" style="margin-top:4px;color:var(--ink-soft);font-size:0.82em">after: ' + after + '</span>' : '') +
+        (after ? '<span class="round-scores round-after">after: ' + after + '</span>' : '') +
         '</button>'
       );
       game.adjustments.forEach(function (adj) {
@@ -302,17 +387,20 @@
   var newGameDialog = $('#newGameDialog');
   function playerRowHtml(value) {
     return '<label class="field"><span class="sr-only">Player name</span>' +
-      '<input type="text" class="new-player-name" maxlength="24" autocomplete="off" placeholder="Player name" value="' + esc(value || '') + '"></label>';
+      '<input type="text" class="new-player-name" maxlength="40" autocomplete="off" placeholder="Player name" value="' + esc(value || '') + '"></label>';
   }
   function openNewGameDialog() {
     $('#newGameForm').reset();
     $('#newGameTarget').value = '75';
     $('#newGameError').hidden = true;
+    // Prefill only from a game the user actually created — never the demo's fake names.
     var current = store.currentGame();
-    var names = current ? current.players.map(function (p) { return p.name; }) : ['', ''];
+    var names = (current && !current.seed) ? current.players.map(function (p) { return p.name; }) : ['', ''];
     if (names.length < 2) names = names.concat(['', '']).slice(0, 2);
     $('#newGamePlayers').innerHTML = names.map(playerRowHtml).join('');
     newGameDialog.showModal();
+    var firstEmpty = $$('#newGamePlayers input').find(function (i) { return !i.value; });
+    if (firstEmpty) firstEmpty.focus();
   }
   $('#addPlayerRowBtn').addEventListener('click', function () {
     var host = $('#newGamePlayers');
@@ -375,8 +463,8 @@
         }
         return '<div class="score-row calc"><span class="who">' + dotHtml(p) + '<span>' + esc(p.name) + '</span></span>' +
           '<div class="calc-inputs">' +
-          '<label>Played to Dutch<input type="number" min="0" max="40" step="1" data-calc-dutch="' + esc(p.id) + '" value="' + (pre.dutchCards !== undefined ? pre.dutchCards : '') + '"></label>' +
-          '<label>Left in Blitz<input type="number" min="0" max="10" step="1" data-calc-blitz="' + esc(p.id) + '" value="' + (pre.blitzLeft !== undefined ? pre.blitzLeft : '') + '"></label>' +
+          '<label>Played to Dutch<input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="40" step="1" data-calc-dutch="' + esc(p.id) + '" value="' + (pre.dutchCards !== undefined ? pre.dutchCards : '') + '"></label>' +
+          '<label>Left in Blitz<input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="10" step="1" data-calc-blitz="' + esc(p.id) + '" value="' + (pre.blitzLeft !== undefined ? pre.blitzLeft : '') + '"></label>' +
           '<span class="calc-result" data-calc-result="' + esc(p.id) + '" aria-live="off">= 0</span>' +
           '</div></div>';
       }
@@ -403,6 +491,16 @@
 
   $('#roundInputs').addEventListener('input', function (e) {
     if (e.target.hasAttribute('data-calc-dutch') || e.target.hasAttribute('data-calc-blitz')) updateCalcResults();
+  });
+  // Enter/Go hops to the next player's field instead of submitting a half-empty
+  // round — saving is only ever the explicit "Save round" button.
+  $('#roundInputs').addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' || e.target.tagName !== 'INPUT') return;
+    e.preventDefault();
+    var inputs = $$('#roundInputs input');
+    var next = inputs[inputs.indexOf(e.target) + 1];
+    if (next) next.focus();
+    else e.target.blur();
   });
   $('#roundInputs').addEventListener('click', function (e) {
     var btn = e.target.closest('[data-step]');
@@ -511,7 +609,18 @@
       toast('Round updated');
     } else {
       E.addRound(game, scores, Date.now());
-      toast('Round ' + game.rounds.length + ' saved');
+      // Instant undo in the toast: right after a save is exactly when
+      // someone shouts "wait, I had 3 cards left, not 2".
+      toast('Round ' + game.rounds.length + ' saved', {
+        actionLabel: 'Undo',
+        onAction: function () {
+          var g = store.currentGame();
+          if (!g || !E.undoLastRound(g)) return;
+          store.touch(g);
+          renderAll();
+          announce('Round undone.');
+        },
+      });
       blip();
     }
     store.touch(game);
@@ -614,7 +723,7 @@
     if (!game) return;
     $('#playersList').innerHTML = game.players.map(function (p) {
       return '<li>' + dotHtml(p) +
-        '<input type="text" value="' + esc(p.name) + '" maxlength="24" data-rename="' + esc(p.id) + '" aria-label="Rename ' + esc(p.name) + '">' +
+        '<input type="text" value="' + esc(p.name) + '" maxlength="40" data-rename="' + esc(p.id) + '" aria-label="Rename ' + esc(p.name) + '">' +
         '<button type="button" class="chip-btn" data-remove="' + esc(p.id) + '">Remove</button></li>';
     }).join('');
   }
@@ -712,7 +821,15 @@
     var game = store.currentGame();
     if (!game) return;
     $('#exportText').value = E.exportText(game);
+    $('#shareExportBtn').hidden = !navigator.share;
     $('#exportDialog').showModal();
+    $('#exportText').scrollTop = 0;
+  });
+  $('#shareExportBtn').addEventListener('click', function () {
+    var game = store.currentGame();
+    if (!game || !navigator.share) return;
+    navigator.share({ title: 'Dutch Blitz — ' + game.name, text: $('#exportText').value })
+      .catch(function () { /* user cancelled the share sheet */ });
   });
   $('#copyExportBtn').addEventListener('click', function () {
     var text = $('#exportText').value;

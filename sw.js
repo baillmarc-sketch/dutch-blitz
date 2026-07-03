@@ -1,6 +1,9 @@
 /* Dutch Blitz Sidecar — offline-first service worker.
-   Cache-first for the app shell; bump CACHE on any asset change. */
-var CACHE = 'blitz-sidecar-v1';
+   CI stamps CACHE with the commit SHA on every deploy (see the deploy
+   workflow), so each release changes sw.js bytes, triggers install, and
+   refetches fresh assets. Navigations are network-first so index.html
+   revalidates whenever the user is online; everything else is cache-first. */
+var CACHE = 'blitz-sidecar-v1'; /* %DEPLOY_STAMP% */
 var ASSETS = [
   './',
   './index.html',
@@ -36,23 +39,45 @@ self.addEventListener('activate', function (event) {
   );
 });
 
+/** Only precached app-shell URLs are ever written to the cache at runtime. */
+function isShellAsset(url) {
+  var scopePath = new URL(self.registration.scope).pathname;
+  var path = url.pathname;
+  return ASSETS.some(function (a) {
+    return path === scopePath.replace(/\/$/, '/') + a.replace(/^\.\//, '') || (a === './' && path === scopePath);
+  });
+}
+
 self.addEventListener('fetch', function (event) {
   if (event.request.method !== 'GET') return;
   var url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
+
+  // Navigations: network-first so deployed updates arrive; cached shell offline.
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request).then(function (response) {
+        if (response && response.ok) {
+          var copy = response.clone();
+          caches.open(CACHE).then(function (cache) { cache.put('./index.html', copy); });
+        }
+        return response;
+      }).catch(function () {
+        return caches.match('./index.html');
+      })
+    );
+    return;
+  }
+
   event.respondWith(
     caches.match(event.request, { ignoreSearch: true }).then(function (cached) {
       if (cached) return cached;
       return fetch(event.request).then(function (response) {
-        if (response && response.ok) {
+        if (response && response.ok && isShellAsset(url)) {
           var copy = response.clone();
           caches.open(CACHE).then(function (cache) { cache.put(event.request, copy); });
         }
         return response;
-      }).catch(function () {
-        // Offline navigation to an uncached path still gets the app shell.
-        if (event.request.mode === 'navigate') return caches.match('./index.html');
-        return Response.error();
       });
     })
   );

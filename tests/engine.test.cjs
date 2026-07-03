@@ -498,6 +498,93 @@ test('corrupt save with failed backup: notice is honest, original untouched', ()
   assert.strictEqual(ls.getItem(S.KEY), '{definitely not json', 'original bytes still in place');
 });
 
+test('toInt: number-input strings like "1e3" read as 1000, junk as 0', () => {
+  assert.strictEqual(E.toInt('1e3'), 1000);
+  assert.strictEqual(E.toInt('2e2'), 200);
+  assert.strictEqual(E.toInt('-7'), -7);
+  assert.strictEqual(E.toInt('12.9'), 12);
+  assert.strictEqual(E.toInt('abc'), 0);
+  assert.strictEqual(E.toInt(''), 0);
+  assert.strictEqual(E.toInt(null), 0);
+});
+
+test('merge: adjustment anchored in tab B follows its round when tab A deleted an earlier round', () => {
+  const ls = fakeStorage();
+  const a = new S.Store(ls, () => 1000);
+  a.load();
+  const game = E.newGame({ name: 'G', playerNames: ['P'], createdAt: 1000 });
+  const pid = game.players[0].id;
+  const r1 = E.addRound(game, [{ playerId: pid, mode: 'simple', value: 1 }], 100);
+  E.addRound(game, [{ playerId: pid, mode: 'simple', value: 2 }], 200);
+  a.addGame(game, true);
+
+  const b = new S.Store(ls, () => 2000);
+  b.load(); // B sees rounds 1 and 2
+
+  // Tab A deletes round 1 (round 2 renumbers to 1) and persists.
+  E.deleteRound(game, r1.id);
+  a.touch(game);
+
+  // Tab B (stale) attaches a correction to what it still calls round 2, persists → merge.
+  const bGame = b.currentGame();
+  E.addAdjustment(bGame, bGame.players[0].id, 5, 'fix', 2, 2000);
+  b.touch(bGame);
+
+  const check = new S.Store(ls, () => 3000);
+  check.load();
+  const merged = check.currentGame();
+  const adj = merged.adjustments[0];
+  const roundIdx = merged.rounds.find((r) => E.scoreValue(r.scores[0]) === 2).index;
+  assert.strictEqual(adj.attachedToRoundIndex, roundIdx,
+    'anchor must follow the round with value 2, got ' + adj.attachedToRoundIndex + ' vs ' + roundIdx);
+  assert.strictEqual(E.playerTotals(merged)[pid], 2 + 5);
+});
+
+test('tombstones are pruned oldest-first past the cap', () => {
+  const ls = fakeStorage();
+  const s = new S.Store(ls, () => 1000);
+  s.load();
+  for (let i = 1; i <= 45; i++) s.state.tombstones['dead-' + i] = i;
+  s.persist();
+  const keys = Object.keys(s.state.tombstones);
+  assert.strictEqual(keys.length, 40, 'capped at 40, got ' + keys.length);
+  assert.ok(!keys.includes('dead-1') && !keys.includes('dead-5'), 'oldest dropped');
+  assert.ok(keys.includes('dead-45'), 'newest kept');
+});
+
+test('deleting the current game falls back to the newest remaining game', () => {
+  const ls = fakeStorage();
+  const s = new S.Store(ls, () => 1000);
+  s.load();
+  const g1 = E.newGame({ name: 'Old', playerNames: ['A'], createdAt: 1 });
+  const g2 = E.newGame({ name: 'New', playerNames: ['B'], createdAt: 2 });
+  s.addGame(g1, false);
+  g1.updatedAt = 1; s.persist();
+  s.addGame(g2, true);
+  g2.updatedAt = 99; s.persist();
+  s.deleteGame(g2.id);
+  assert.strictEqual(s.state.currentGameId, g1.id, 'falls back to remaining game');
+});
+
+test('corrupt save + failed backup: ensureSeed must NOT overwrite the original', () => {
+  const ls = fakeStorage();
+  ls.setItem(S.KEY, '{definitely not json');
+  const realSet = ls.setItem.bind(ls);
+  ls.setItem = (k, v) => { if (k.startsWith(S.BACKUP_PREFIX)) throw new Error('quota'); realSet(k, v); };
+  const s = new S.Store(ls, () => 5000);
+  s.load();
+  assert.strictEqual(s.writesBlocked, true);
+  s.ensureSeed(); // the exact boot sequence app.js runs
+  s.persist();
+  assert.strictEqual(ls.getItem(S.KEY), '{definitely not json',
+    'original corrupt bytes survive the boot sequence');
+  // Explicit user consent unblocks writes.
+  s.allowOverwrite();
+  s.ensureSeed();
+  assert.notStrictEqual(ls.getItem(S.KEY), '{definitely not json', 'overwrite happens only after consent');
+  assert.ok(s.currentGame(), 'seed loads after consent');
+});
+
 test('settings sanitization falls back safely on junk values', () => {
   const st = S.sanitizeState({ rev: 'x', settings: { darkMode: 'disco', defaultInputMode: 42, bigType: 'yes' } });
   assert.strictEqual(st.settings.darkMode, 'auto');

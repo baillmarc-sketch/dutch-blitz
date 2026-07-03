@@ -19,6 +19,7 @@
   var MAX_TOMBSTONES = 40;
 
   var Engine = global.BlitzEngine || (typeof require !== 'undefined' ? require('./engine.js') : null);
+  if (!Engine) throw new Error('storage.js requires engine.js to be loaded first');
   var toInt = Engine.toInt;
 
   function defaultSettings() {
@@ -34,13 +35,17 @@
     return {
       version: VERSION,
       rev: 0,
-      games: {},
-      tombstones: {}, // gameId -> deletion timestamp
+      // null-prototype maps: ids named like Object.prototype keys ("constructor")
+      // in a hostile/corrupt save must not hit inherited properties
+      games: Object.create(null),
+      tombstones: Object.create(null), // gameId -> deletion timestamp
       currentGameId: null,
       seedLoaded: false,
       settings: defaultSettings(),
     };
   }
+
+  var MAX_GAMES = 100; // sanity cap so a hostile multi-MB payload can't freeze the tab
 
   /** Coerce anything parsed from storage into a valid state. Drops nothing it can keep. */
   function sanitizeState(raw) {
@@ -62,7 +67,7 @@
       });
     }
     if (raw.games && typeof raw.games === 'object') {
-      Object.keys(raw.games).forEach(function (id) {
+      Object.keys(raw.games).slice(0, MAX_GAMES).forEach(function (id) {
         var g = Engine.sanitizeGame(raw.games[id]);
         if (g && !state.tombstones[g.id]) state.games[g.id] = g;
       });
@@ -89,16 +94,31 @@
     var base = pickNewer(a, b);
     var other = base === a ? b : a;
 
+    // Union deletion tombstones first: a delete in either tab always wins,
+    // so a stale copy can't resurrect a removed round or correction.
+    ['deletedRounds', 'deletedAdjustments'].forEach(function (field) {
+      var union = Object.create(null);
+      [a, b].forEach(function (g) {
+        Object.keys(g[field] || {}).forEach(function (id) { union[id] = 1; });
+      });
+      base[field] = union;
+    });
+    var deadRound = base.deletedRounds;
+    var deadAdj = base.deletedAdjustments;
+
     // Remember which round each side's index numbers refer to, pre-merge.
     var baseIdxToId = Object.create(null);
     var otherIdxToId = Object.create(null);
     (base.rounds || []).forEach(function (r) { baseIdxToId[r.index] = r.id; });
     (other.rounds || []).forEach(function (r) { otherIdxToId[r.index] = r.id; });
 
+    base.rounds = (base.rounds || []).filter(function (r) { return !deadRound[r.id]; });
+    base.adjustments = (base.adjustments || []).filter(function (adj) { return !deadAdj[adj.id]; });
+
     var haveRound = Object.create(null);
-    (base.rounds || []).forEach(function (r) { haveRound[r.id] = true; });
+    base.rounds.forEach(function (r) { haveRound[r.id] = true; });
     (other.rounds || []).forEach(function (r) {
-      if (!haveRound[r.id]) base.rounds.push(r);
+      if (!haveRound[r.id] && !deadRound[r.id]) base.rounds.push(r);
     });
     base.rounds.sort(function (x, y) {
       return (toInt(x.timestamp) - toInt(y.timestamp)) || (toInt(x.index) - toInt(y.index));
@@ -112,9 +132,9 @@
       adj.attachedToRoundIndex = (rid && idToNewIndex[rid]) ? idToNewIndex[rid] : null;
     }
     var haveAdj = Object.create(null);
-    (base.adjustments || []).forEach(function (adj) { haveAdj[adj.id] = true; remapAnchor(adj, baseIdxToId); });
+    base.adjustments.forEach(function (adj) { haveAdj[adj.id] = true; remapAnchor(adj, baseIdxToId); });
     (other.adjustments || []).forEach(function (adj) {
-      if (!haveAdj[adj.id]) { remapAnchor(adj, otherIdxToId); base.adjustments.push(adj); }
+      if (!haveAdj[adj.id] && !deadAdj[adj.id]) { remapAnchor(adj, otherIdxToId); base.adjustments.push(adj); }
     });
 
     var havePlayer = Object.create(null);
@@ -133,7 +153,18 @@
     this.now = now || function () { return Date.now(); };
     this.state = emptyState();
     this.recoveryNotice = null; // set when a save had to be recovered or couldn't be written
+    // Set when a corrupt save exists that could NOT be backed up: all writes
+    // are refused so the user's only copy survives until they explicitly
+    // choose to start fresh (allowOverwrite()).
+    this.writesBlocked = false;
   }
+
+  /** Explicit user consent to overwrite an unrecoverable corrupt save. */
+  Store.prototype.allowOverwrite = function () {
+    this.writesBlocked = false;
+    this.recoveryNotice = null;
+    this.persist();
+  };
 
   Store.prototype.readRaw = function () {
     try {
@@ -187,7 +218,9 @@
           'It has NOT been touched — but recording anything new will overwrite it. ' +
           'If it matters, copy this browser’s "' + KEY + '" storage value somewhere safe first.';
         this.state = emptyState();
-        // Deliberately no persist: the corrupt original stays until the user acts.
+        // Block ALL writes (including the first-run seed) until the user
+        // explicitly opts in — the corrupt blob is their only copy.
+        this.writesBlocked = true;
       }
       return this.state;
     }
@@ -245,6 +278,7 @@
 
   /** Write to storage, merging first if another tab advanced the revision under us. */
   Store.prototype.persist = function () {
+    if (this.writesBlocked) return false; // an unrecoverable corrupt save must not be overwritten
     var raw = this.readRaw();
     var result = this.parseRaw(raw);
     if (result && result.corrupt) {
@@ -265,7 +299,9 @@
       // Quota exceeded or storage blocked: roll the revision back so the
       // monotonic guard still merges correctly on the next successful write.
       this.state.rev = prevRev;
-      this.recoveryNotice = 'Autosave failed (storage full or blocked). Scores are kept in memory — export them as text to be safe.';
+      if (!this.recoveryNotice) { // never clobber a more important notice
+        this.recoveryNotice = 'Autosave failed (storage full or blocked). Scores are kept in memory — export them as text to be safe.';
+      }
       return false;
     }
   };
@@ -331,7 +367,7 @@
 
   /** First-run seed: the sample game from the brief (also the regression fixture). */
   Store.prototype.ensureSeed = function () {
-    if (this.state.seedLoaded) return null;
+    if (this.state.seedLoaded || this.writesBlocked) return null;
     var game = Engine.seedGame(this.now());
     game.updatedAt = this.now();
     this.state.games[game.id] = game;

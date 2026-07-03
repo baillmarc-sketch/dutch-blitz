@@ -26,9 +26,16 @@
   }
 
   function toInt(value) {
-    var n = typeof value === 'number' ? value : parseInt(value, 10);
+    // Number() (not parseInt) so "1e3" from a number input reads as 1000, not 1.
+    var n = typeof value === 'number' ? value : Number(String(value == null ? '' : value).trim() || 0);
     return Number.isFinite(n) ? Math.trunc(n) : 0;
   }
+
+  // Sanity caps applied when reading storage: far beyond any real game night,
+  // tight enough that a hostile multi-MB payload can't freeze the tab.
+  var MAX_ROUNDS = 1000;
+  var MAX_ADJUSTMENTS = 1000;
+  var MAX_SANITIZED_PLAYERS = 20;
 
   /** Official scoring: +1 per card played to Dutch piles, −2 per card left in Blitz pile. */
   function calcScore(dutchCards, blitzLeft) {
@@ -235,6 +242,12 @@
     return round;
   }
 
+  /** Record a deleted round/adjustment id so a stale tab's merge can't resurrect it. */
+  function markDeleted(game, field, id) {
+    if (!game[field] || typeof game[field] !== 'object') game[field] = {};
+    game[field][id] = 1;
+  }
+
   /**
    * Delete a round and re-index the ones after it. Adjustments attached to the
    * deleted round become standalone (still visible, never silently dropped);
@@ -244,6 +257,7 @@
     var idx = (game.rounds || []).findIndex(function (r) { return r.id === roundId; });
     if (idx === -1) return false;
     var removedIndex = game.rounds[idx].index;
+    markDeleted(game, 'deletedRounds', roundId);
     game.rounds.splice(idx, 1);
     game.rounds.forEach(function (r, i) { r.index = i + 1; });
     (game.adjustments || []).forEach(function (adj) {
@@ -287,6 +301,7 @@
   function deleteAdjustment(game, adjId) {
     var before = (game.adjustments || []).length;
     game.adjustments = (game.adjustments || []).filter(function (a) { return a.id !== adjId; });
+    if (game.adjustments.length !== before) markDeleted(game, 'deletedAdjustments', adjId);
     return game.adjustments.length !== before;
   }
 
@@ -336,8 +351,10 @@
     return true;
   }
 
-  /** Reset scores, keep players and target. */
+  /** Reset scores, keep players and target. Everything cleared is tombstoned so no stale tab restores it. */
   function resetGame(game) {
+    (game.rounds || []).forEach(function (r) { markDeleted(game, 'deletedRounds', r.id); });
+    (game.adjustments || []).forEach(function (a) { markDeleted(game, 'deletedAdjustments', a.id); });
     game.rounds = [];
     game.adjustments = [];
     return game;
@@ -408,7 +425,7 @@
     game.createdAt = toInt(game.createdAt);
     game.updatedAt = toInt(game.updatedAt);
     var seenIds = Object.create(null); // null-proto: ids named like Object.prototype keys must not collide
-    game.players = (Array.isArray(game.players) ? game.players : [])
+    game.players = (Array.isArray(game.players) ? game.players : []).slice(0, MAX_SANITIZED_PLAYERS)
       .filter(function (p) { return p && typeof p === 'object'; })
       .filter(function (p) {
         // duplicate ids would double-count one player's totals — keep the first
@@ -428,7 +445,7 @@
     // Remember each round's stored index before renumbering, so adjustment
     // anchors can be remapped to the same round rather than the same number.
     var indexMap = Object.create(null);
-    game.rounds = (Array.isArray(game.rounds) ? game.rounds : [])
+    game.rounds = (Array.isArray(game.rounds) ? game.rounds : []).slice(0, MAX_ROUNDS)
       .filter(function (r) { return r && typeof r === 'object'; })
       .map(function (r, i) {
         var storedIndex = toInt(r.index) >= 1 ? toInt(r.index) : i + 1; // legacy rounds without an index anchor by position
@@ -446,7 +463,7 @@
             }),
         };
       });
-    game.adjustments = (Array.isArray(game.adjustments) ? game.adjustments : [])
+    game.adjustments = (Array.isArray(game.adjustments) ? game.adjustments : []).slice(0, MAX_ADJUSTMENTS)
       .filter(function (a) { return a && typeof a === 'object' && validIds[a.playerId] === true; })
       .map(function (a) {
         var anchor = null;
@@ -464,6 +481,13 @@
           timestamp: toInt(a.timestamp),
         };
       });
+    ['deletedRounds', 'deletedAdjustments'].forEach(function (field) {
+      var clean = Object.create(null);
+      if (game[field] && typeof game[field] === 'object') {
+        Object.keys(game[field]).slice(0, 4000).forEach(function (id) { clean[id] = 1; });
+      }
+      game[field] = clean;
+    });
     return game;
   }
 
