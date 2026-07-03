@@ -319,7 +319,7 @@
         '<span class="badges">' +
         (delta !== null ? '<span class="delta' + (delta < 0 ? ' neg' : '') + '" title="last round">' + signed(delta) + '</span>' : '') +
         (needs !== null ? '<span class="needs">needs ' + needs + '</span>' : '') +
-        (r.hitTarget ? '<span class="badge win">🏆 Win</span>' : (r.isLeader ? '<span class="badge">★</span>' : '')) +
+        (r.hitTarget ? '<span class="badge win">🏆 Win</span>' : '') +
         '</span>' +
         '<span class="total">' + r.total + '</span></li>';
     }).join('');
@@ -889,7 +889,7 @@
   $('#shareExportBtn').addEventListener('click', function () {
     var game = store.currentGame();
     if (!game || !navigator.share) return;
-    navigator.share({ title: 'Dutch Blitz — ' + game.name, text: $('#exportText').value })
+    navigator.share({ title: 'Pile On — ' + game.name, text: $('#exportText').value })
       .catch(function () { /* user cancelled the share sheet */ });
   });
   $('#copyExportBtn').addEventListener('click', function () {

@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; manifest-src 'self'; connect-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'self'">
 <meta name="referrer" content="no-referrer">
-<meta name="theme-color" content="#f8efdc" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#201710" media="(prefers-color-scheme: dark)">
-<meta name="description" content="Phone-first companion for physical Dutch Blitz: quick rules, beginner cheat-sheet, and a fast score tracker.">
-<title>Dutch Blitz Sidecar</title>
+<meta name="theme-color" content="#f6f4ec" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#20242c" media="(prefers-color-scheme: dark)">
+<meta name="description" content="Pile On: the score sheet for your Dutch Blitz nights — fast round entry, quick rules, works offline.">
+<title>Pile On — Blitz Scorepad</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -19,18 +19,16 @@
 
 <header class="app-header">
   <svg class="hex-sign" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
-    <circle cx="50" cy="50" r="47" fill="var(--cream-deep)" stroke="var(--ink)" stroke-width="5"/>
-    <g stroke="var(--ink)" stroke-width="3" stroke-linejoin="round">
-      <path d="M50 10 L61 39 L50 50 L39 39 Z" fill="var(--c-red)"/>
-      <path d="M90 50 L61 61 L50 50 L61 39 Z" fill="var(--c-yellow)"/>
-      <path d="M50 90 L39 61 L50 50 L61 61 Z" fill="var(--c-blue)"/>
-      <path d="M10 50 L39 39 L50 50 L39 61 Z" fill="var(--c-green)"/>
-    </g>
-    <circle cx="50" cy="50" r="7" fill="var(--ink)"/>
+    <rect x="10" y="6" width="80" height="88" rx="6" fill="var(--card)" stroke="var(--ink)" stroke-width="4"/>
+    <line x1="30" y1="6" x2="30" y2="94" stroke="var(--accent)" stroke-width="3" opacity="0.75"/>
+    <line x1="38" y1="34" x2="82" y2="34" stroke="var(--line)" stroke-width="3"/>
+    <line x1="38" y1="52" x2="82" y2="52" stroke="var(--line)" stroke-width="3"/>
+    <line x1="38" y1="70" x2="82" y2="70" stroke="var(--line)" stroke-width="3"/>
+    <ellipse cx="60" cy="52" rx="19" ry="13" fill="none" stroke="var(--accent)" stroke-width="4" transform="rotate(-4 60 52)"/>
   </svg>
   <div class="app-title">
-    <h1>Dutch Blitz Sidecar</h1>
-    <p class="tagline">Keep it open. Play the cards.</p>
+    <h1>Pile On</h1>
+    <p class="tagline">Every hand, in pencil. A Dutch Blitz scorepad.</p>
   </div>
   <button id="settingsBtn" class="icon-btn" type="button" aria-label="Settings">
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm9.4 4a7.6 7.6 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7.5 7.5 0 0 0-2-1.2L16.5 3h-4l-.4 2.6a7.5 7.5 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.7 7.7 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7.5 7.5 0 0 0 2 1.2l.4 2.6h4l.4-2.6a7.5 7.5 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.06-.4.1-.8.1-1.2Z" transform="translate(-1.5 -0.5) scale(1.05)"/></svg>

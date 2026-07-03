@@ -1,12 +1,12 @@
 {
-  "name": "Dutch Blitz Sidecar",
-  "short_name": "Blitz Sidecar",
-  "description": "Companion for physical Dutch Blitz: quick rules, beginner cheat-sheet, and a fast score tracker.",
+  "name": "Pile On — Blitz Scorepad",
+  "short_name": "Pile On",
+  "description": "The score sheet for your Dutch Blitz nights: fast round entry, quick rules, works offline.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#f8efdc",
-  "theme_color": "#f8efdc",
+  "background_color": "#f6f4ec",
+  "theme_color": "#f6f4ec",
   "icons": [
     { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
