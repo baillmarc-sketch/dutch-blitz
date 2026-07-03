@@ -65,6 +65,12 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; } /* author display rules must never resurrect hidden elements */
 
+/* iOS: rapid taps on controls must step scores, not trigger double-tap zoom.
+   Pinch-zoom stays available (never disable user scaling). */
+button, input, select, textarea, a, label { touch-action: manipulation; }
+/* iOS zooms the page when focusing an input under 16px — keep fields at or above it. */
+input, select, textarea { font-size: max(16px, 1em); }
+
 html { height: 100%; }
 body {
   margin: 0;
