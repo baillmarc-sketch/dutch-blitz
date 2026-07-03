@@ -116,6 +116,10 @@ body {
   max-width: 640px; margin: 0 auto;
 }
 .hex-sign { width: 52px; height: 52px; flex: none; }
+/* two brand marks live in the header; the Design setting picks one */
+.mark-folk { display: none; }
+:root[data-design="folk"] .mark-folk { display: block; }
+:root[data-design="folk"] .mark-ledger { display: none; }
 .app-title h1 {
   margin: 0; font-size: 1.35em; line-height: 1.1;
   font-weight: 900; letter-spacing: -0.02em;
@@ -172,6 +176,13 @@ h1, .game-name, .section-label, .btn, .tab, .chip-btn,
 .btn-danger-outline { background: var(--card); color: var(--accent); }
 
 .btn-big { flex: 1; font-size: 1.1em; }
+/* small phones: keep the primary pair on one line, give names room to breathe */
+@media (max-width: 374px) {
+  .btn { padding: 10px 10px; }
+  .btn-primary, .btn-danger { letter-spacing: 0.02em; }
+  .btn-big { font-size: 1em; }
+  .needs { display: none; }
+}
 .btn-row { display: flex; gap: 10px; margin: 14px 0; align-items: stretch; }
 /* Pinned within both viewport edges: visible above the tab bar even when the
    leaderboard is taller than the screen (the "Blitz!" moment must never require scrolling). */

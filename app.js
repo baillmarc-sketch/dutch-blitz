@@ -69,7 +69,7 @@
       btn.type = 'button';
       btn.className = 'btn btn-danger-outline';
       btn.style.marginTop = '8px';
-      btn.textContent = 'Start fresh anyway (overwrites the unreadable save)';
+      btn.textContent = 'Start fresh anyway';
       btn.addEventListener('click', function () {
         confirmAction('Overwrite the unreadable save and start fresh? This cannot be undone.', 'Overwrite')
           .then(function (ok) {
@@ -106,6 +106,7 @@
     if (s.darkMode === 'auto') root.removeAttribute('data-theme');
     else root.setAttribute('data-theme', s.darkMode);
     root.setAttribute('data-bigtype', s.bigType ? 'true' : 'false');
+    root.setAttribute('data-design', s.design === 'folk' ? 'folk' : 'ledger');
   }
 
   /* ---------- toast / sound / confetti ---------- */
@@ -330,7 +331,7 @@
     if (winners.length && game.rounds.length) {
       banner.innerHTML = '<span>🏆 ' + winners.map(function (r) { return esc(r.player.name); }).join(' & ') +
         ' win' + (winners.length === 1 ? 's' : '') + '!</span>' +
-        '<button type="button" class="btn btn-primary" id="rematchBtn">Rematch — same players</button>';
+        '<button type="button" class="btn btn-primary" id="rematchBtn">Rematch</button>';
       banner.hidden = false;
       $('#rematchBtn').addEventListener('click', function () {
         var current = store.currentGame();
@@ -343,7 +344,7 @@
         });
         store.addGame(next, true);
         renderAll();
-        toast('Rematch! Same crew, fresh scores.');
+        toast('Rematch — same players, fresh sheet');
         announce('Rematch started with the same players.');
       });
     } else {
@@ -909,12 +910,14 @@
     var s = store.state.settings;
     $('#setBigType').checked = s.bigType;
     $('#setSound').checked = s.soundOn;
+    $('#setDesign').value = s.design || 'ledger';
     $('#setTheme').value = s.darkMode;
     $('#setInputMode').value = s.defaultInputMode;
     $('#settingsDialog').showModal();
   });
   $('#setBigType').addEventListener('change', function (e) { store.updateSettings({ bigType: e.target.checked }); applySettings(); });
   $('#setSound').addEventListener('change', function (e) { store.updateSettings({ soundOn: e.target.checked }); });
+  $('#setDesign').addEventListener('change', function (e) { store.updateSettings({ design: e.target.value }); applySettings(); });
   $('#setTheme').addEventListener('change', function (e) { store.updateSettings({ darkMode: e.target.value }); applySettings(); });
   $('#setInputMode').addEventListener('change', function (e) { store.updateSettings({ defaultInputMode: e.target.value }); });
 

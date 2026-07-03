@@ -8,6 +8,7 @@ var ASSETS = [
   './',
   './index.html',
   './styles.css',
+  './folk.css',
   './engine.js',
   './storage.js',
   './app.js',
