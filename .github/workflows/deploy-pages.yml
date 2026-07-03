@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: pages
@@ -16,27 +16,38 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: 22
       - name: Engine + storage tests (seed regression 26/23/11/9)
         run: node tests/engine.test.cjs
 
-  # Publishes main to the gh-pages branch (GitHub Pages source). The Pages
-  # REST API is not accessible to the workflow token on this repo, so the
-  # classic branch-based deploy is used instead.
+  # Publishes an explicit allowlist of site files to the gh-pages branch
+  # (GitHub Pages source). The Pages REST API is not accessible to the
+  # workflow token on this repo, so the classic branch-based deploy is used.
   deploy:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
-      - name: Push site to gh-pages
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Build publish set and push to gh-pages
         run: |
+          set -euo pipefail
+          mkdir /tmp/site
+          cp index.html styles.css engine.js storage.js app.js sw.js manifest.webmanifest /tmp/site/
+          cp -r icons /tmp/site/icons
+          touch /tmp/site/.nojekyll
+          # Stamp the service-worker cache name with the commit SHA so every
+          # deploy changes sw.js bytes and installed clients pick up the update.
+          sed -i "s/blitz-sidecar-v1/blitz-sidecar-${GITHUB_SHA::12}/" /tmp/site/sw.js
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B gh-pages
-          touch .nojekyll
-          git add .nojekyll
-          git commit -m "Deploy ${GITHUB_SHA::7}" --allow-empty
+          git checkout --orphan gh-pages
+          git rm -rfq .
+          cp -r /tmp/site/. .
+          git add -A
+          git commit -m "Deploy ${GITHUB_SHA::7}"
           git push -f origin gh-pages

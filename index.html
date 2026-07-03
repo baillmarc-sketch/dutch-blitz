@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; manifest-src 'self'; connect-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'self'">
+<meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#f8efdc" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#201710" media="(prefers-color-scheme: dark)">
 <meta name="description" content="Phone-first companion for physical Dutch Blitz: quick rules, beginner cheat-sheet, and a fast score tracker.">
@@ -181,7 +183,7 @@
       <span class="tab-icon" aria-hidden="true">⌂</span><span>Home</span>
     </button>
     <button id="tab-score" class="tab" role="tab" aria-selected="false" aria-controls="panel-score" type="button">
-      <span class="tab-icon" aria-hidden="true">✎</span><span>Scores</span>
+      <span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="21" height="21" focusable="false"><path fill="currentColor" d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25ZM20.7 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg></span><span>Scores</span>
     </button>
     <button id="tab-rules" class="tab" role="tab" aria-selected="false" aria-controls="panel-rules" type="button">
       <span class="tab-icon" aria-hidden="true">☰</span><span>Rules</span>
@@ -230,8 +232,10 @@
     <div id="roundInputs"></div>
     <p class="form-note">Empty fields count as 0.</p>
     <div class="btn-row">
-      <button type="button" class="btn btn-outline" data-close>Cancel</button>
       <button type="button" id="deleteRoundBtn" class="btn btn-danger-outline" hidden>Delete round</button>
+    </div>
+    <div class="btn-row">
+      <button type="button" class="btn btn-outline" data-close>Cancel</button>
       <button type="submit" class="btn btn-primary">Save round</button>
     </div>
   </form>
@@ -272,7 +276,7 @@
     <form id="addPlayerForm" class="add-player-row">
       <label class="field grow">
         <span class="sr-only">New player name</span>
-        <input type="text" id="addPlayerName" maxlength="24" autocomplete="off" placeholder="New player name">
+        <input type="text" id="addPlayerName" maxlength="40" autocomplete="off" placeholder="New player name">
       </label>
       <button type="submit" class="btn btn-primary">Add</button>
     </form>
@@ -307,6 +311,7 @@
     <textarea id="exportText" class="export-text" rows="12" readonly aria-label="Game history as text"></textarea>
     <div class="btn-row">
       <button type="button" class="btn btn-outline" data-close>Close</button>
+      <button type="button" id="shareExportBtn" class="btn btn-outline" hidden>Share…</button>
       <button type="button" id="copyExportBtn" class="btn btn-primary">Copy to clipboard</button>
     </div>
   </div>
