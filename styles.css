@@ -398,6 +398,25 @@ input.switch:checked::after { transform: translateX(24px); background: var(--acc
 }
 .quick-start li { margin: 6px 0; padding-left: 0; }
 
+/* the table-layout diagram under the refresher */
+.table-map {
+  margin: 10px 0 4px; padding: 6px 4px;
+  background: var(--card);
+  border: var(--border) solid var(--edge); border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.table-map svg { display: block; width: 100%; height: auto; }
+.table-map text { font-family: inherit; }
+.map-section { font-size: 12px; font-weight: 900; letter-spacing: 1px; fill: var(--ink-soft); }
+.map-label { font-size: 11px; font-weight: 900; letter-spacing: 0.5px; fill: var(--ink); }
+.map-sub { font-size: 10px; font-weight: 600; fill: var(--ink-soft); }
+.map-num { font-size: 22px; font-weight: 900; text-anchor: middle; }
+.map-hint { font-size: 22px; font-weight: 900; fill: var(--ink-soft); }
+.map-stroke { stroke: var(--line); stroke-width: 2.5; }
+.map-outline { fill: var(--cream); stroke: var(--ink-soft); stroke-width: 2; stroke-dasharray: 5 4; }
+.map-back { fill: var(--cream-deep); stroke: var(--line); stroke-width: 2.5; }
+.map-divider { stroke: color-mix(in srgb, var(--ink) 25%, transparent); stroke-width: 2; stroke-dasharray: 6 5; }
+
 .score-row {
   display: grid; gap: 8px; align-items: center;
   grid-template-columns: 1fr auto;
