@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; manifest-src 'self'; connect-src 'self' wss://0.peerjs.com https://0.peerjs.com; worker-src 'self'; base-uri 'none'; form-action 'self'">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#f6f4ec" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#20242c" media="(prefers-color-scheme: dark)">
+<meta name="description" content="Pile On live tables: play real Dutch Blitz over the internet with a share code.">
+<title>Pile On — Live Table</title>
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css?v=a1645fa66cee">
+<link rel="stylesheet" href="folk.css?v=a1645fa66cee">
+<link rel="stylesheet" href="play.css?v=a1645fa66cee">
+</head>
+<body class="play">
+
+<header class="playbar">
+  <a class="leave" href="index.html" id="leaveLink">← Scorepad</a>
+  <span class="room" id="roomLabel">PILE ON · LIVE</span>
+  <button class="sound-toggle" id="helpBtn" type="button" aria-label="How to play" title="How to play">?</button>
+  <button class="sound-toggle" id="soundBtn" type="button" aria-pressed="false" aria-label="Sound on/off" title="Sound">🔊</button>
+  <span class="conn gone" id="connBadge"><i></i><span id="connWord">not connected</span></span>
+</header>
+
+<main>
+  <!-- ============ ENTRY ============ -->
+  <section id="view-entry" class="play-views">
+    <div class="play-card">
+      <h2>Host a table</h2>
+      <label class="field"><span>Your name</span>
+        <input type="text" id="hostName" maxlength="12" autocomplete="nickname" placeholder="Your name">
+      </label>
+      <label class="field"><span>Play to</span>
+        <select id="hostTarget">
+          <option value="75">75 (official)</option>
+          <option value="50">50</option>
+          <option value="25">25 — quick game</option>
+        </select>
+      </label>
+      <p id="hostError" class="form-error" role="alert" hidden></p>
+      <div class="btn-row"><button id="createBtn" class="btn btn-primary btn-big" type="button">Create table</button></div>
+      <p class="card-note">Invite friends with the code, or add computer players once you’re in.</p>
+    </div>
+
+    <div class="play-card">
+      <h2>Practice vs computer</h2>
+      <p class="card-note">Play right now against the computer — no code, no waiting. Add 1–3 opponents and pick how tough they are.</p>
+      <div class="btn-row"><button id="soloBtn" class="btn btn-outline btn-big" type="button">⚄ Play the computer</button></div>
+    </div>
+
+    <div class="play-card">
+      <h2>Join a table</h2>
+      <label class="field"><span>Your name</span>
+        <input type="text" id="joinName" maxlength="12" autocomplete="nickname" placeholder="Your name">
+      </label>
+      <label class="field"><span>Table code</span>
+        <input type="text" id="joinCode" maxlength="7" autocapitalize="characters" autocomplete="one-time-code" autocorrect="off" spellcheck="false" placeholder="ABC123">
+      </label>
+      <p id="joinError" class="form-error" role="alert" hidden></p>
+      <div class="btn-row"><button id="joinBtn" class="btn btn-primary btn-big" type="button">Join</button></div>
+    </div>
+    <p class="form-note">The host's phone runs the game — it should stay awake and online. 2–4 players. Codes never use 0, 1, I or O.</p>
+  </section>
+
+  <!-- ============ LOBBY ============ -->
+  <section id="view-lobby" class="play-views" hidden>
+    <div class="code-lockup">
+      <div class="lbl">Table code</div>
+      <div class="code" id="codeText" role="button" tabindex="0" aria-label="Copy table code"></div>
+      <div class="btn-row code-actions">
+        <button class="chip-btn" id="copyCodeBtn" type="button">Copy code</button>
+        <button class="chip-btn" id="shareCodeBtn" type="button" hidden>Share link</button>
+      </div>
+    </div>
+    <h2 class="section-label" id="rosterLabel">At the table</h2>
+    <ul class="roster" id="rosterList" aria-live="polite"></ul>
+    <label class="field row">
+      <span>Log rounds to my Scores</span>
+      <input type="checkbox" id="autologSwitch" class="switch" checked>
+    </label>
+    <div id="hostLobbyControls" hidden>
+      <div class="add-bot">
+        <span class="add-bot-label">Add a computer player</span>
+        <div class="bot-tiers" id="botTiers">
+          <button class="chip-btn" type="button" data-bot="easy">＋ Easy</button>
+          <button class="chip-btn" type="button" data-bot="medium">＋ Medium</button>
+          <button class="chip-btn" type="button" data-bot="hard">＋ Hard</button>
+          <button class="chip-btn" type="button" data-bot="expert">＋ Expert</button>
+        </div>
+        <p class="bot-hint" id="botHint">Easy is gentle for first-timers. Expert plays like a sharp human.</p>
+      </div>
+      <div class="btn-row"><button id="startBtn" class="btn btn-primary btn-big" type="button">Start round</button></div>
+      <p class="start-reason" id="startReason"></p>
+      <p class="host-keep-note" id="hostKeepNote">Your phone is the table — keep Pile On open and awake. Use <b>Share link</b> or <b>Copy code</b> above so you don’t have to leave the app.</p>
+    </div>
+    <div id="guestLobbyNote" class="waiting-note" hidden></div>
+  </section>
+
+  <!-- ============ TABLE ============ -->
+  <section id="view-table" class="table-view" hidden>
+    <div class="opp-strip" id="oppStrip"></div>
+    <div class="dutch-wrap">
+      <div class="arena">
+        <div class="arena-head"><span class="arena-label">The table</span><span class="ticker" id="ticker" aria-live="polite"></span></div>
+        <div class="dutch-grid" id="dutchGrid" aria-label="Dutch piles — shared, build 1 to 10 by color"></div>
+      </div>
+    </div>
+    <div class="you" id="youPanel">
+      <div class="slots" id="youSlots"></div>
+      <div class="actions">
+        <span class="hint" id="hintLine">Tap a card to play it</span>
+        <button id="flipBtn" class="btn btn-outline" type="button">FLIP ×3</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ RESULTS ============ -->
+  <section id="view-scores" class="play-views" hidden>
+    <h2 class="section-label" id="scoresTitle">Round scores</h2>
+    <div class="score-sheet" id="scoreSheet"></div>
+    <div id="hostScoreControls" hidden>
+      <div class="btn-row">
+        <button id="nextRoundBtn" class="btn btn-primary btn-big" type="button">Deal next round</button>
+        <button id="endGameBtn" class="btn btn-outline" type="button">End game</button>
+      </div>
+    </div>
+    <div id="guestScoreNote" class="waiting-note" hidden></div>
+    <div id="matchEndControls" hidden>
+      <div class="btn-row">
+        <button id="backToLobbyBtn" class="btn btn-primary btn-big" type="button">Back to lobby</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ TABLE TALK (lobby + between rounds) ============ -->
+  <div id="chatDock" class="chat-dock" hidden>
+    <div class="chat-log" id="chatLog" aria-live="polite" aria-label="Table chat"></div>
+    <div class="chat-reacts" id="chatReacts"><!-- 3 random reacts, reshuffled each round --></div>
+    <form class="chat-input" id="chatForm" autocomplete="off">
+      <input type="text" id="chatText" maxlength="120" placeholder="Say something…" autocomplete="off" autocorrect="on" enterkeyhint="send">
+      <button type="submit" class="chip-btn" id="chatSend">Send</button>
+    </form>
+  </div>
+</main>
+
+<div id="blitzOverlay" class="blitz-overlay" hidden>
+  <div class="blitz-sheet">
+    <span class="stamp">Blitz!</span>
+    <p class="caller" id="blitzCaller"></p>
+    <p class="counting">counting the table…</p>
+  </div>
+</div>
+
+<div id="helpSheet" class="help-sheet" hidden>
+  <div class="help-card" role="dialog" aria-modal="true" aria-label="How to play">
+    <button class="help-close" id="helpClose" type="button" aria-label="Close">✕</button>
+    <h2>How to play</h2>
+    <ul class="help-list">
+      <li><b>Win the round:</b> empty your red-ringed <b>Blitz</b> pile.</li>
+      <li><b>The table:</b> build the shared piles <b>1 → 10, one color each</b>. Any 1 starts a new pile. First card down wins the spot.</li>
+      <li><b>Play a card:</b> tap it — it jumps to the middle if it fits and scores.</li>
+      <li><b>Post piles:</b> park spares on your 3 Posts — build <b>down</b>, alternating ▲ and ○. Empty Posts fill from your Blitz.</li>
+      <li><b>Stuck?</b> <b>FLIP</b> turns 3 cards from your hand onto Wood. Run out? Flip again to recycle.</li>
+      <li><b>Score:</b> +1 for each card you played to the middle, −2 for each card left in your Blitz.</li>
+    </ul>
+  </div>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<p id="liveAnnounce" class="sr-only" aria-live="polite"></p>
+<div id="confetti" class="confetti" aria-hidden="true"></div>
+
+<noscript><p class="notice warn">Live tables need JavaScript.</p></noscript>
+
+<script src="vendor/peerjs.min.js?v=a1645fa66cee"></script>
+<script src="engine.js?v=a1645fa66cee"></script>
+<script src="storage.js?v=a1645fa66cee"></script>
+<script src="game-core.js?v=a1645fa66cee"></script>
+<script src="bot.js?v=a1645fa66cee"></script>
+<script src="sound.js?v=a1645fa66cee"></script>
+<script src="net.js?v=a1645fa66cee"></script>
+<script src="play.js?v=a1645fa66cee"></script>
+</body>
+</html>
