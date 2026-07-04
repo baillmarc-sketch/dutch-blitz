@@ -296,6 +296,54 @@ test('security: id counter never recycles a seat after a kick', async () => {
   [g1, g3, g4].forEach((g) => g.close()); host.close();
 });
 
+test('chat relays to every seat, trimmed and length-capped', async () => {
+  const host = new Net.HostSession({ name: 'Marc', transport: 'local', code: 'CHATAA' });
+  const g1 = makeGuest('CHATAA', 'Ada');
+  const g2 = makeGuest('CHATAA', 'Bo');
+  await waitFor(() => g1.playerId && g2.playerId, 'joined');
+  const c1 = collect(g1, 'chat'), c2 = collect(g2, 'chat'), ch = collect(host, 'chat');
+  g1.sendChat('  hey   everyone  ');
+  await waitFor(() => c2.length && ch.length, 'chat fanned out');
+  const line = c2[c2.length - 1];
+  assert.strictEqual(line.text, 'hey everyone', 'whitespace collapsed + trimmed');
+  assert.strictEqual(line.name, 'Ada');
+  assert.strictEqual(line.id, g1.playerId);
+  // host chat reaches guests too; overlong text is capped
+  host.sendChat('x'.repeat(500));
+  const long = await waitFor(() => c1.find((l) => l.id === 'p0'), 'host chat');
+  assert.ok(long.text.length <= 120, 'chat capped to 120 chars');
+  g1.close(); g2.close(); host.close();
+});
+
+test('host snapshot + restore reattaches guests mid-round by token', async () => {
+  var host = new Net.HostSession({ name: 'Marc', transport: 'local', code: 'RESUME' });
+  const g1 = makeGuest('RESUME', 'Ada');
+  await waitFor(() => g1.playerId, 'joined');
+  host.startRound(11);
+  await waitFor(() => host.state, 'dealt');
+  g1.sendIntent({ type: 'flip' }, 1);
+  await waitFor(() => host.state.players[g1.playerId].wood.length === 3, 'a play happened');
+
+  // host "reloads": snapshot, silent close, rebuild from the snapshot
+  const snap = host.snapshot();
+  assert.strictEqual(snap.role, 'host');
+  assert.strictEqual(snap.roundNo, 1);
+  assert.ok(snap.players.find((p) => p.name === 'Ada').token, 'guest token preserved in snapshot');
+  host.close(true); // silent — no bye
+
+  const host2 = new Net.HostSession({ restore: snap, transport: 'local' });
+  assert.strictEqual(host2.code, 'RESUME', 'same code');
+  assert.strictEqual(host2.roundNo, 1, 'round restored');
+  assert.strictEqual(host2.state.players[g1.playerId].wood.length, 3, 'board state restored');
+  // the still-open guest re-hellos on the new host and gets its seat + state back
+  const states = collect(g1, 'state');
+  g1.transport.send({ t: 'hello', v: Net.PROTOCOL_V, name: 'Ada', token: g1.token });
+  await waitFor(() => states.find((s) => s.state && s.roundNo === 1), 'restored state re-sent to guest');
+  const seat = host2.players.find((p) => p.token === g1.token);
+  assert.ok(seat && seat.connected, 'guest reattached to the same seat after restore');
+  g1.close(); host2.close();
+});
+
 test('host disappearing flips guests to reconnecting (heartbeat watchdog)', async () => {
   const host = new Net.HostSession({ name: 'Marc', transport: 'local', code: 'TESTAH' });
   const g1 = makeGuest('TESTAH', 'Ada');

@@ -58,7 +58,39 @@
   var VIEWS = ['entry', 'lobby', 'table', 'scores'];
   function show(view) {
     VIEWS.forEach(function (v) { $('#view-' + v).hidden = v !== view; });
+    // table talk lives in the waiting moments — lobby and between rounds
+    $('#chatDock').hidden = !(view === 'lobby' || view === 'scores');
   }
+
+  /* ---------- table talk ---------- */
+  function onChat(line) {
+    if (!line || !line.text) return;
+    var log = $('#chatLog');
+    var mine = line.id === myId;
+    var el = document.createElement('div');
+    el.className = 'chat-line' + (mine ? ' me' : '');
+    // names + text are attacker-influenced (relayed via the host) — escape both
+    el.innerHTML = '<span class="who">' + esc(mine ? 'You' : (line.name || '?')) + '</span>' + esc(line.text);
+    log.appendChild(el);
+    while (log.children.length > 40) log.removeChild(log.firstChild);
+    log.scrollTop = log.scrollHeight;
+    if (!mine) announce(line.name + ' says ' + line.text);
+  }
+  function sendChat(text) {
+    text = String(text || '').trim();
+    if (!text || !session || !session.sendChat) return;
+    session.sendChat(text);
+  }
+  $('#chatDock').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-react]');
+    if (b) sendChat(b.getAttribute('data-react'));
+  });
+  $('#chatForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var t = $('#chatText').value;
+    $('#chatText').value = '';
+    sendChat(t);
+  });
 
   /* boy ▲ / girl ○ — post-pile legality carried by shape, not color */
   function genderGlyph(color, size) {
@@ -89,6 +121,13 @@
   var nToSource = {};      // intent n -> sourceKey (for shake on nack)
   var loggedKey = 'pileon.logged';
   var wakeLock = null;
+  // change-tracking so the board animates fluidly (no popups): remember the
+  // previous board so we can pulse exactly what moved between broadcasts
+  var prevTops = {};   // dutch slot index -> {top, done}
+  var prevBlitz = {};  // opponent id -> blitz count
+  var seenPlayN = 0;   // last lastPlay nonce we've shown in the ticker
+  var trackRound = 0;  // round these snapshots belong to
+  var resumeGuestCtx = null; // set while retrying a guest reconnect on load
 
   function myPlayer() { return payload && payload.state ? payload.state.players[myId] : null; }
   function sourceKey(from) { return from.zone + (from.idx != null ? from.idx : ''); }
@@ -105,6 +144,26 @@
   });
 
   function rememberName(name) { try { localStorage.setItem('pileon.onlineName', name); } catch (e) { /* fine */ } }
+
+  /* ---------- resume after a reload / accidental back button ----------
+     We stash just enough to slip back into the same seat: guests keep their
+     reconnect token; the host keeps a full table snapshot so it can re-open
+     the same code and rebroadcast. Peer transport only (tests use local). */
+  var SESSION_KEY = 'pileon.session';
+  var SESSION_TTL = 3 * 60 * 60 * 1000; // 3h — stale tables shouldn't auto-resume
+  function saveSession(obj) {
+    if (!obj) return;
+    try { obj.ts = Date.now(); obj.transport = TRANSPORT; localStorage.setItem(SESSION_KEY, JSON.stringify(obj)); } catch (e) { /* quota */ }
+  }
+  function loadSession() {
+    try {
+      var s = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
+      // only resume into the same transport it was saved from, within the TTL
+      if (s && s.transport === TRANSPORT && Date.now() - (s.ts || 0) < SESSION_TTL) return s;
+    } catch (e) { /* corrupt */ }
+    return null;
+  }
+  function clearSession() { try { localStorage.removeItem(SESSION_KEY); } catch (e) { /* fine */ } }
 
   $('#createBtn').addEventListener('click', function () {
     var name = $('#hostName').value.trim();
@@ -127,21 +186,31 @@
   });
 
   /* ---------- host ---------- */
-  function startHost(name, target) {
+  function startHost(name, target, restore) {
     isHost = true;
     myId = 'p0';
-    setConn('connecting', 'connecting');
-    session = new NET.HostSession({ name: name, target: target, transport: TRANSPORT });
+    setConn(restore ? 'reconnecting' : 'connecting', restore ? 'resuming' : 'connecting');
+    session = new NET.HostSession(restore ? { restore: restore, transport: TRANSPORT } : { name: name, target: target, transport: TRANSPORT });
+    var persist = function () { try { saveSession(session.snapshot()); } catch (e) { /* fine */ } };
     wireCommon(session);
     session.on('status', function (s) {
       if (s === 'live') { setConn('', 'live'); }
     });
     session.on('err', function (code) {
       if (code === 'unavailable-id') {
-        toast('Code collision — rolling a new table');
-        session.close();
-        startHost(name, target); // fresh random code
-        return;
+        if (restore) {
+          // reclaiming OUR OWN code after a reload — the PeerJS server frees
+          // the old id a moment after our socket dropped; retry same code
+          restore._tries = (restore._tries || 0) + 1;
+          if (restore._tries <= 5) { toast('Reopening your table…'); try { session.close(true); } catch (e) {} setTimeout(function () { startHost(name, target, restore); }, 2000); return; }
+          toast('Couldn’t reopen the table. Starting fresh.');
+          clearSession();
+        } else {
+          toast('Code collision — rolling a new table');
+          try { session.close(true); } catch (e) {}
+          startHost(name, target); // fresh random code
+          return;
+        }
       }
       if (code === 'signal-lost') { setConn('gone', 'signal lost'); toast('Lost the signal server — new players can’t join. Reload to reopen the table.'); return; }
       setConn('reconnecting', 'network issue');
@@ -150,14 +219,27 @@
       if (s === 'down') setConn('reconnecting', 'reconnecting…');
       else setConn('', 'live');
     });
-    session.on('roster', function (r) { roster = r; renderLobby(); });
+    session.on('roster', function (r) { roster = r; renderLobby(); persist(); });
     session.on('nack', function (nack) { onNack(nack); });
+    session.on('chat', function (line) { onChat(line); });
     roster = session.rosterPayload();
     $('#roomLabel').textContent = 'TABLE ' + session.code;
-    show('lobby');
-    renderLobby();
+    session.on('state', function (p) { onState(p); persist(); });
     acquireWake(); // the host's device runs the game — keep it awake from the lobby on
-    session.on('state', function (p) { onState(p); });
+    persist();
+    if (restore && restore.state) {
+      // render the restored board directly; reconnecting guests receive the
+      // live state when they re-hello. Suppress the round-end celebration so a
+      // reload on the score screen doesn't replay the Blitz stamp.
+      payload = session.statePayload();
+      trackRound = restore.roundNo; lastEndedRound = restore.roundNo;
+      if (restore.state.status === 'playing') { show('table'); renderTable(); }
+      else if (restore.state.status === 'ended') { renderScores(false); show('scores'); }
+      else { show('lobby'); renderLobby(); }
+    } else {
+      show('lobby');
+      renderLobby();
+    }
   }
 
   // ?seed=N forces a reproducible deal (demos + the E2E); ignored in normal play
@@ -176,16 +258,19 @@
   }
 
   /* ---------- guest ---------- */
-  function startGuest(name, code) {
+  function startGuest(name, code, token) {
     isHost = false;
-    setConn('connecting', 'connecting');
-    session = new NET.GuestSession({ name: name, code: code, transport: TRANSPORT });
+    setConn(token ? 'reconnecting' : 'connecting', token ? 'resuming' : 'connecting');
+    session = new NET.GuestSession({ name: name, code: code, token: token || null, transport: TRANSPORT });
     wireCommon(session);
     session.on('welcome', function (w) {
       myId = w.playerId;
       roster = w.roster;
+      resumeGuestCtx = null; // reconnected successfully
       $('#roomLabel').textContent = 'TABLE ' + w.code;
       if (w.name !== name) toast('You’re "' + w.name + '" at this table');
+      // remember our seat so a reload / back button slides us right back in
+      saveSession({ role: 'guest', code: w.code, token: w.token, name: w.name, playerId: w.playerId });
       if (!payload || !payload.state) { show('lobby'); renderLobby(); }
     });
     session.on('roster', function (r) {
@@ -205,9 +290,21 @@
     session.on('state', function (p) { onState(p); });
     session.on('nack', function (nack) { onNack(nack); });
     session.on('nudged', function () { toast('Table was stuck — decks nudged'); });
+    session.on('chat', function (line) { onChat(line); });
   }
 
   function guestError(code) {
+    // mid-resume, a "not there yet" is expected (host may be reloading too) —
+    // retry a few times before giving up rather than bouncing to the entry form
+    if (resumeGuestCtx && (code === 'no-such-room' || code === 'join-timeout' || code === 'peer-error')) {
+      if (resumeGuestCtx.tries++ < 4) {
+        setConn('reconnecting', 'reconnecting…');
+        if (session) try { session.close(true); } catch (e) {}
+        setTimeout(function () { startGuest(resumeGuestCtx.name, resumeGuestCtx.code, resumeGuestCtx.token); }, 3000);
+        return;
+      }
+      resumeGuestCtx = null;
+    }
     var err = $('#joinError');
     var messages = {
       'no-such-room': 'No table found for that code. Check it with the host — codes never use 0, 1, I or O.',
@@ -218,17 +315,20 @@
       'join-timeout': 'Couldn’t reach that table. Check the code, and make sure the host still has Pile On open and online.',
     };
     if (messages[code]) {
+      // these are terminal — don't auto-resume a table we can't or shouldn't rejoin
+      if (code === 'removed' || code === 'version' || code === 'full' || code === 'no-such-room') clearSession();
       show('entry');
       err.textContent = messages[code];
       err.hidden = false;
       setConn('gone', 'offline');
-      if (session) { session.close(); session = null; }
+      if (session) { try { session.close(true); } catch (e) {} session = null; }
     } else {
       setConn('reconnecting', 'network issue');
     }
   }
 
   function hostGone() {
+    clearSession(); // the host said goodbye — nothing to resume
     setConn('gone', 'table closed');
     offline(true);
     toast('The table closed — scores so far are saved below');
@@ -244,9 +344,14 @@
     }
   }
 
-  function wireCommon(s) {
-    window.addEventListener('pagehide', function () { if (session) session.close(); });
-    $('#leaveLink').addEventListener('click', function () { if (session) session.close(); });
+  var wired = false;
+  function wireCommon() {
+    if (wired) return; // attach the global listeners exactly once
+    wired = true;
+    // reload / app-switch: close QUIETLY (no "bye") so we can resume the seat
+    window.addEventListener('pagehide', function () { if (session) try { session.close(true); } catch (e) {} });
+    // tapping Leave is deliberate — drop the saved session and say goodbye
+    $('#leaveLink').addEventListener('click', function () { clearSession(); if (session) try { session.close(); } catch (e) {} });
   }
 
   /* ---------- lobby ---------- */
@@ -315,6 +420,9 @@
       renderLobby();
       return;
     }
+    if (p.roundNo !== trackRound) { // fresh deal — forget last round's board
+      prevTops = {}; prevBlitz = {}; seenPlayN = 0; trackRound = p.roundNo;
+    }
     if (p.state.status === 'playing') {
       if ($('#view-table').hidden) {
         show('table');
@@ -323,6 +431,7 @@
         announce('Round ' + p.roundNo + ' dealt. Go!');
       }
       renderTable();
+      runTicker(p.lastPlay);
     } else if (p.state.status === 'ended') {
       renderTable();
       if (p.roundNo !== lastEndedRound) {
@@ -348,23 +457,40 @@
   }
 
   /* ---------- table rendering ---------- */
+  function runTicker(lastPlay) {
+    var el = $('#ticker');
+    if (!lastPlay || !lastPlay.n || lastPlay.n === seenPlayN) return;
+    seenPlayN = lastPlay.n;
+    var who = lastPlay.playerId === myId ? 'You' : esc(lastPlay.name || 'Someone');
+    var color = safeColor(lastPlay.color), value = safeVal(lastPlay.value);
+    var msg;
+    if (lastPlay.blitz) msg = '<b>' + who + '</b> emptied the Blitz pile!';
+    else if (lastPlay.to === 'post') msg = '<b>' + who + '</b> parked a card';
+    else msg = '<b>' + who + '</b> → ' + color + ' ' + value;
+    el.innerHTML = msg;
+    el.classList.remove('tick'); void el.offsetWidth; el.classList.add('tick');
+  }
+
   function renderOpponents() {
     if (!payload || !payload.state) return;
     var st = payload.state;
+    var newBlitz = {};
     $('#oppStrip').innerHTML = st.order.filter(function (id) { return id !== myId; }).map(function (id) {
       var p = st.players[id];
       var r = roster.find(function (x) { return x.id === id; });
       var away = r && !r.connected;
       var blitzLeft = safeNum(p.blitz.length, 0, 10);
-      var danger = blitzLeft <= 2;
-      return '<div class="opp' + (away ? ' away' : '') + '">' +
+      var tier = blitzLeft > 0 && blitzLeft <= 2 ? ' danger' : blitzLeft === 3 ? ' warn' : '';
+      newBlitz[id] = blitzLeft;
+      var dropped = prevBlitz[id] != null && blitzLeft < prevBlitz[id];
+      return '<div class="opp' + (away ? ' away' : '') + tier + (dropped ? ' drop' : '') + '">' +
         '<span class="nm">' + esc(p.name) + '</span>' +
-        '<span class="mini" aria-hidden="true"></span>' +
-        '<span class="bcount' + (danger ? ' danger' : '') + '" title="cards left in their Blitz pile">' + blitzLeft + '</span>' +
+        '<span class="blitz-read"><b class="bcount">' + blitzLeft + '</b><span class="cap">' + (blitzLeft === 1 ? 'to win!' : 'in blitz') + '</span></span>' +
         '<span class="pdot" aria-hidden="true"></span>' +
         '<span class="sr-only">' + esc(p.name) + ' has ' + blitzLeft + ' Blitz cards left' + (away ? ', away' : '') + '</span>' +
         '</div>';
     }).join('');
+    prevBlitz = newBlitz;
   }
 
   function renderDutch() {
@@ -372,14 +498,19 @@
     var me = myPlayer();
     var sel = selection ? selection.card : null;
     var legal = sel ? G.legalDutchTargets(st, sel) : [];
+    var newTops = {};
     var cells = st.dutch.map(function (pile, i) {
       var color = safeColor(pile.color);
       var topVal = safeVal(pile.top);
+      var prev = prevTops[i];
+      newTops[i] = { top: topVal, done: !!pile.done };
+      var sealed = pile.done && !(prev && prev.done);
+      var advanced = !pile.done && ((prev && !prev.done && topVal > prev.top) || !prev);
       if (pile.done) {
-        return '<button type="button" class="pile live done" disabled data-c="' + color + '">10<span class="prog">done</span></button>';
+        return '<button type="button" class="pile live done' + (sealed ? ' sealed' : '') + '" disabled data-c="' + color + '">10<span class="prog">done</span></button>';
       }
       var isLegal = legal.indexOf(i) !== -1;
-      return '<button type="button" class="pile live' + (isLegal ? ' legal' : '') + '" data-pile="' + i + '" data-c="' + color + '"' +
+      return '<button type="button" class="pile live' + (isLegal ? ' legal' : '') + (advanced ? ' advanced' : '') + '" data-pile="' + i + '" data-c="' + color + '"' +
         ' aria-label="' + color + ' pile at ' + topVal + (isLegal ? ', legal target' : '') + '">' +
         genderGlyph(color, 9) + topVal +
         '<span class="prog">' + topVal + '/10</span></button>';
@@ -390,6 +521,7 @@
       cells.push('<button type="button" class="pile empty' + (canNew ? ' legal' : '') + '" data-pile="new" aria-label="Empty pile slot — a 1 starts here">' + (canNew ? '▸1' : '1') + '</button>');
     }
     $('#dutchGrid').innerHTML = cells.join('');
+    prevTops = newTops;
   }
 
   function cardHtml(card, extraClass, attrs) {
@@ -407,13 +539,14 @@
 
     // Blitz
     var bTop = G.top(me.blitz);
+    var bLeft = safeNum(me.blitz.length, 0, 10);
     if (bTop) {
-      slots.push('<div class="slot">' +
-        cardHtml(bTop, (selKey === 'blitz' ? 'selected' : '') + (inflight.blitz ? ' inflight' : ''), 'data-src="blitz" aria-label="Your Blitz card: ' + safeColor(bTop.color) + ' ' + safeVal(bTop.value) + ', ' + safeNum(me.blitz.length, 0, 10) + ' left"') +
-        '<span class="chit blitz">' + safeNum(me.blitz.length, 0, 10) + '</span>' +
-        '<div class="lbl">Blitz · ' + safeNum(me.blitz.length, 0, 10) + '</div></div>');
+      slots.push('<div class="slot blitz">' +
+        cardHtml(bTop, (selKey === 'blitz' ? 'selected' : '') + (inflight.blitz ? ' inflight' : ''), 'data-src="blitz" aria-label="Your Blitz card: ' + safeColor(bTop.color) + ' ' + safeVal(bTop.value) + ', ' + bLeft + ' left"') +
+        '<span class="chit blitz">' + bLeft + '</span>' +
+        '<div class="lbl">Blitz · <b>' + bLeft + '</b></div></div>');
     } else {
-      slots.push('<div class="slot"><button type="button" class="pcard slot-empty" disabled>OUT</button><div class="lbl">Blitz · 0</div></div>');
+      slots.push('<div class="slot blitz"><button type="button" class="pcard slot-empty" disabled>OUT</button><div class="lbl">Blitz · <b>0</b></div></div>');
     }
 
     // Posts
@@ -669,7 +802,28 @@
     if (document.visibilityState === 'visible' && wakeWanted && !wakeLock) acquireWake();
   });
 
-  // deep link straight into the join card
-  if (deepCode) $('#joinName').focus();
-  show('entry');
+  /* ---------- boot: resume, deep-link, or fresh ---------- */
+  wireCommon();
+  (function boot() {
+    // Auto-resume targets the real cross-device case (peer transport, separate
+    // localStorage per phone). The local transport shares one localStorage
+    // across tabs, so only resume there when a test explicitly asks (?resume=1).
+    var mayResume = TRANSPORT === 'peer' || params.get('resume') === '1';
+    var saved = mayResume ? loadSession() : null;
+    // A deep link to a *different* table wins over a stale saved session.
+    if (deepCode && saved && saved.role === 'guest' && saved.code !== deepCode) saved = null;
+    if (saved && saved.role === 'host') {
+      toast('Reopening your table…');
+      startHost(saved.hostName || saved.name, saved.target, saved);
+      return;
+    }
+    if (saved && saved.role === 'guest') {
+      toast('Rejoining your table…');
+      resumeGuestCtx = { name: saved.name, code: saved.code, token: saved.token, tries: 0 };
+      startGuest(saved.name, saved.code, saved.token);
+      return;
+    }
+    if (deepCode) $('#joinName').focus();
+    show('entry');
+  })();
 })();

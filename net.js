@@ -155,18 +155,37 @@
   function HostSession(opts) {
     var G = global.BlitzPlay;
     var self = this;
-    this.code = opts.code || makeCode(6);
-    this.target = opts.target || 75;
-    this.hostName = opts.name;
-    this.roundNo = 0;
-    this.totals = {};
-    this.state = null;
     this.listeners = {};
-    this.nextSeat = 1; // p0 is the host; monotonic so a kick never recycles an id
-    // p0's token is random and NEVER leaves this device — the host runs the
-    // engine locally and never re-joins over the wire, so no guest can present
-    // it to hijack the host seat.
-    this.players = [{ id: 'p0', name: opts.name, connId: null, token: randToken(), connected: true }];
+    var r = opts.restore;
+    if (r) {
+      // resume an interrupted table (host reloaded / hit back): re-open the
+      // same peer id so the code stays valid; guests reconnect with their
+      // tokens and get the current state rebroadcast to them.
+      this.code = r.code;
+      this.target = r.target || 75;
+      this.hostName = r.hostName || (r.players[0] && r.players[0].name);
+      this.roundNo = r.roundNo || 0;
+      this.totals = r.totals || {};
+      this.state = r.state || null;
+      this.lastPlay = r.lastPlay || null;
+      this.nextSeat = r.nextSeat || r.players.length;
+      this.players = r.players.map(function (p, i) {
+        // everyone but the host starts disconnected until they reconnect
+        return { id: p.id, name: p.name, token: p.token, connId: null, connected: i === 0 };
+      });
+    } else {
+      this.code = opts.code || makeCode(6);
+      this.target = opts.target || 75;
+      this.hostName = opts.name;
+      this.roundNo = 0;
+      this.totals = {};
+      this.state = null;
+      this.nextSeat = 1; // p0 is the host; monotonic so a kick never recycles an id
+      // p0's token is random and NEVER leaves this device — the host runs the
+      // engine locally and never re-joins over the wire, so no guest can present
+      // it to hijack the host seat.
+      this.players = [{ id: 'p0', name: opts.name, connId: null, token: randToken(), connected: true }];
+    }
 
     this.transport = hostTransport(opts.transport || 'peer', this.code, {
       onOpen: function () { self.emit('status', 'live'); },
@@ -187,6 +206,16 @@
     (this.listeners[ev] || []).forEach(function (cb) { cb(a, b); });
   };
 
+  /** Serializable table state for crash/reload recovery (kept on the host). */
+  HostSession.prototype.snapshot = function () {
+    return {
+      role: 'host', code: this.code, target: this.target, hostName: this.hostName,
+      roundNo: this.roundNo, totals: this.totals, state: this.state,
+      lastPlay: this.lastPlay || null, nextSeat: this.nextSeat,
+      players: this.players.map(function (p) { return { id: p.id, name: p.name, token: p.token }; }),
+    };
+  };
+
   HostSession.prototype.rosterPayload = function () {
     return this.players.map(function (p) {
       return { id: p.id, name: p.name, connected: p.connected };
@@ -199,7 +228,9 @@
   };
 
   HostSession.prototype.statePayload = function (state) {
-    return { t: 'state', roundNo: this.roundNo, target: this.target, totals: this.totals, state: state === undefined ? this.state : state };
+    // lastPlay rides alongside (not inside) state so it survives redaction —
+    // guests use it to animate the exact pile and show the activity ticker
+    return { t: 'state', roundNo: this.roundNo, target: this.target, totals: this.totals, lastPlay: this.lastPlay || null, state: state === undefined ? this.state : state };
   };
 
   /**
@@ -286,11 +317,29 @@
       this.applyFrom(p.id, intent, msg.n, function (nack) { self.transport.send(connId, nack); });
       return;
     }
+    if (msg.t === 'chat') {
+      var cp = this.players.find(function (x) { return x.connId === connId; });
+      if (!cp) return;
+      if (!this.allow(connId)) return; // chat shares the flood budget
+      this.relayChat(cp.id, cp.name, msg.text);
+      return;
+    }
     if (msg.t === 'bye') {
       var q = this.players.find(function (x) { return x.connId === connId; });
       if (q) { q.connected = false; q.connId = null; this.broadcastRoster(); }
     }
   };
+
+  /** Fan a chat line out to everyone (and the host UI), trimmed + capped. */
+  HostSession.prototype.relayChat = function (fromId, name, text) {
+    var clean = String(text == null ? '' : text).replace(/\s+/g, ' ').trim().slice(0, 120);
+    if (!clean) return;
+    var line = { t: 'chat', id: fromId, name: name, text: clean, seq: (this.chatSeq = (this.chatSeq || 0) + 1) };
+    this.transport.broadcast(line);
+    this.emit('chat', line);
+  };
+
+  HostSession.prototype.sendChat = function (text) { this.relayChat('p0', this.hostName, text); };
 
   /** Single entry point for every intent — host's own taps use it too. */
   HostSession.prototype.applyFrom = function (playerId, intent, n, nackTo) {
@@ -301,6 +350,16 @@
       var nack = { t: 'nack', n: n, reason: r.reason, intent: intent };
       if (nackTo) nackTo(nack); else this.emit('nack', nack);
       return;
+    }
+    // record the play so guests can animate the right pile + run the ticker
+    if (r.event && r.event.type === 'play') {
+      var pl = this.players.find(function (x) { return x.id === playerId; });
+      this.lastPlay = {
+        n: (this.lastPlay ? this.lastPlay.n : 0) + 1,
+        playerId: playerId, name: pl ? pl.name : '',
+        color: r.event.card.color, value: r.event.card.value,
+        to: r.event.to, blitz: !!r.event.blitz,
+      };
     }
     // official stall rule, applied automatically when the whole table is dry
     if (intent.type === 'flip' && G.isStalled(this.state)) {
@@ -319,6 +378,7 @@
   HostSession.prototype.startRound = function (seed) {
     var G = global.BlitzPlay;
     this.roundNo++;
+    this.lastPlay = null; // fresh deal, no history to animate
     this.state = G.newRound(
       this.players.map(function (p) { return { id: p.id, name: p.name }; }),
       seed == null ? Math.floor(Math.random() * 2147483647) : seed
@@ -341,9 +401,11 @@
     this.broadcastRoster();
   };
 
-  HostSession.prototype.close = function () {
+  HostSession.prototype.close = function (silent) {
     clearInterval(this.hb);
-    this.transport.broadcast({ t: 'bye' });
+    // a silent close (page reload) must NOT tell guests the table is gone —
+    // they should wait and reconnect once the host page comes back up
+    if (!silent) this.transport.broadcast({ t: 'bye' });
     this.transport.close();
   };
 
@@ -417,6 +479,7 @@
     if (msg.t === 'state') { this.emit('state', msg); return; }
     if (msg.t === 'nack') { this.emit('nack', msg); return; }
     if (msg.t === 'nudged') { this.emit('nudged'); return; }
+    if (msg.t === 'chat') { this.emit('chat', msg); return; }
     if (msg.t === 'bye') { this.emit('status', 'host-gone'); return; }
     // hb falls through — lastHb already updated
   };
@@ -425,11 +488,15 @@
     this.transport.send({ t: 'intent', intent: intent, n: n });
   };
 
-  GuestSession.prototype.close = function () {
+  GuestSession.prototype.sendChat = function (text) {
+    this.transport.send({ t: 'chat', text: String(text == null ? '' : text).slice(0, 120) });
+  };
+
+  GuestSession.prototype.close = function (silent) {
     this.closed = true;
     clearInterval(this.watch);
     clearTimeout(this.joinTimer);
-    try { this.transport.send({ t: 'bye' }); this.transport.close(); } catch (e) { /* gone */ }
+    try { if (!silent) this.transport.send({ t: 'bye' }); this.transport.close(); } catch (e) { /* gone */ }
   };
 
   global.BlitzNet = {
