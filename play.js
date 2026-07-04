@@ -52,6 +52,28 @@
   }
   // light tactile feedback — the card "snap" you feel through a phone
   function haptic(pattern) { try { if (navigator.vibrate) navigator.vibrate(pattern); } catch (e) { /* unsupported */ } }
+  var SND = window.BlitzSound;
+  function sound(kind, opts) { try { if (SND) SND.play(kind, opts); } catch (e) { /* ignore */ } }
+  // how-to-play cheat sheet — reachable without leaving the table
+  (function wireHelp() {
+    var sheet = $('#helpSheet');
+    function open() { sheet.hidden = false; }
+    function close() { sheet.hidden = true; }
+    $('#helpBtn').addEventListener('click', open);
+    $('#helpClose').addEventListener('click', close);
+    sheet.addEventListener('click', function (e) { if (e.target === sheet) close(); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !sheet.hidden) close(); });
+  })();
+  // sound toggle in the playbar
+  (function wireSound() {
+    var btn = $('#soundBtn');
+    if (!btn || !SND) { if (btn) btn.hidden = true; return; }
+    function paint() { var m = SND.isMuted(); btn.textContent = m ? '🔇' : '🔊'; btn.setAttribute('aria-pressed', String(!m)); }
+    paint();
+    btn.addEventListener('click', function () { SND.unlock(); SND.toggle(); paint(); });
+    // first interaction anywhere unlocks the audio context (autoplay policy)
+    document.addEventListener('pointerdown', function once() { SND.unlock(); document.removeEventListener('pointerdown', once); }, { once: true });
+  })();
   function setConn(cls, word) {
     var b = $('#connBadge');
     b.className = 'conn ' + cls;
@@ -538,6 +560,7 @@
         selection = null;
         acquireWake();
         announce('Round ' + p.roundNo + ' dealt. Go!');
+        sound('deal');
       }
       renderTable();
       runTicker(p.lastPlay);
@@ -558,6 +581,7 @@
     $('#blitzOverlay').hidden = false;
     announce('Blitz! ' + (caller ? caller.name : '') + ' ends the round.');
     haptic(iWon ? [70, 40, 140] : [40, 30, 40]); // a bigger buzz when you win
+    sound('blitz');
     confettiBurst();
     releaseWake();
     setTimeout(function () {
@@ -601,6 +625,11 @@
         '<span class="sr-only">' + esc(p.name) + ' has ' + blitzLeft + ' Blitz cards left' + (away ? ', away' : '') + '</span>' +
         '</div>';
     }).join('');
+    // a rival's Blitz just fell — a quiet tick so you HEAR the race tighten
+    if (Object.keys(prevBlitz).length) {
+      var fell = st.order.some(function (id) { return id !== myId && prevBlitz[id] != null && newBlitz[id] < prevBlitz[id]; });
+      if (fell) sound('oppdrop');
+    }
     prevBlitz = newBlitz;
   }
 
@@ -610,12 +639,14 @@
     var sel = selection ? selection.card : null;
     var legal = sel ? G.legalDutchTargets(st, sel) : [];
     var newTops = {};
+    var anySealed = false;
     var cells = st.dutch.map(function (pile, i) {
       var color = safeColor(pile.color);
       var topVal = safeVal(pile.top);
       var prev = prevTops[i];
       newTops[i] = { top: topVal, done: !!pile.done };
       var sealed = pile.done && !(prev && prev.done);
+      if (sealed) anySealed = true;
       var advanced = !pile.done && ((prev && !prev.done && topVal > prev.top) || !prev);
       if (pile.done) {
         return '<button type="button" class="pile live done' + (sealed ? ' sealed' : '') + '" disabled data-c="' + color + '">10<span class="prog">done</span></button>';
@@ -632,6 +663,7 @@
       cells.push('<button type="button" class="pile empty' + (canNew ? ' legal' : '') + '" data-pile="new" aria-label="Empty pile slot — a 1 starts here">' + (canNew ? '▸1' : '1') + '</button>');
     }
     $('#dutchGrid').innerHTML = cells.join('');
+    if (anySealed && Object.keys(prevTops).length) sound('complete'); // a pile hit 10
     prevTops = newTops;
   }
 
@@ -714,7 +746,13 @@
     nSeq++;
     nToSource[nSeq] = srcKey;
     if (srcKey) inflight[srcKey] = true;
-    if (intent.type === 'play') haptic(8); // a small snap on every card you send
+    if (intent.type === 'play') {
+      haptic(8);
+      // pitch the "thock" by the card's value (peek the source before it moves)
+      var me = myPlayer(), f = intent.from || {}, card = null;
+      if (me) card = f.zone === 'blitz' ? G.top(me.blitz) : f.zone === 'wood' ? G.top(me.wood) : f.zone === 'post' ? G.top(me.post[f.idx]) : null;
+      sound('play', { value: card ? card.value : 1 });
+    }
     if (isHost) {
       session.hostIntent(intent, nSeq); // state broadcast re-renders everything
     } else {
@@ -738,6 +776,7 @@
              : document.querySelector('[data-src="' + src + '"]');
     }
     if (el) { el.classList.add('shake'); setTimeout(function () { el.classList.remove('shake'); }, 260); }
+    sound('reject');
     var msgs = {
       'beaten-to-it': 'Beaten to it!',
       'must-alternate-boy-girl': 'Post piles alternate ▲ and ○',
@@ -753,6 +792,7 @@
     var me = myPlayer();
     if (!me || payload.state.status !== 'playing') return;
     selection = null;
+    sound('flip'); haptic(6);
     // optimistic: guests apply locally for instant feel; the broadcast reconciles
     if (!isHost) G.applyIntent(payload.state, myId, { type: 'flip' });
     sendIntent({ type: 'flip' }, null);
