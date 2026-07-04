@@ -116,12 +116,20 @@
     state.scores = computeScores(state);
   }
 
+  /**
+   * Strict index check for the three Post slots. Intents arrive from the
+   * network — a loose `< 0 || > 2` guard lets strings like '__proto__'
+   * through (NaN comparisons are false) and player.post['__proto__'] is
+   * Array.prototype, so a hostile guest could push cards onto it.
+   */
+  function isPostIdx(i) { return i === 0 || i === 1 || i === 2; }
+
   /** Reads the playable card for a source zone without removing it. */
   function peek(player, from) {
     if (from.zone === 'blitz') return top(player.blitz);
     if (from.zone === 'wood') return top(player.wood);
     if (from.zone === 'post') {
-      if (from.idx == null || from.idx < 0 || from.idx > 2) return null;
+      if (!isPostIdx(from.idx)) return null;
       return top(player.post[from.idx]);
     }
     return null;
@@ -141,6 +149,7 @@
    */
   function applyIntent(state, playerId, intent) {
     if (state.status !== 'playing') return { ok: false, reason: 'round-over' };
+    if (!intent || typeof intent !== 'object' || typeof intent.type !== 'string') return { ok: false, reason: 'bad-intent' };
     var player = state.players[playerId];
     if (!player) return { ok: false, reason: 'unknown-player' };
 
@@ -189,7 +198,7 @@
         if (spent !== -1) state.dutch[spent] = fresh; else state.dutch.push(fresh);
         player.dutchCount++;
       } else if (to.zone === 'dutch') {
-        var pile = state.dutch[to.idx];
+        var pile = typeof to.idx === 'number' ? state.dutch[to.idx] : null;
         if (!pile || pile.done) return { ok: false, reason: 'beaten-to-it' };
         if (pile.color !== card.color || card.value !== pile.top + 1) {
           return { ok: false, reason: 'beaten-to-it' }; // someone else got there first (or illegal)
@@ -202,7 +211,7 @@
           state.completedPiles++;
         }
       } else if (to.zone === 'post') {
-        if (to.idx == null || to.idx < 0 || to.idx > 2) return { ok: false, reason: 'no-such-post' };
+        if (!isPostIdx(to.idx)) return { ok: false, reason: 'no-such-post' };
         if (from.zone === 'post' && from.idx === to.idx) return { ok: false, reason: 'same-pile' };
         var slot = player.post[to.idx];
         var slotTop = top(slot);

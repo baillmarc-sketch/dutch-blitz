@@ -208,6 +208,94 @@ test('reconnect with token re-attaches the same seat', async () => {
   g2.close(); g3.close(); host.close();
 });
 
+test('security: the host seat cannot be hijacked with a guessed token', async () => {
+  const host = new Net.HostSession({ name: 'Marc', transport: 'local', code: 'SECAAA' });
+  // a hostile guest tries the old fixed host token, then a fabricated one
+  const g = makeGuest('SECAAA', 'Mallory', { token: 'host' });
+  await waitFor(() => g.playerId, 'still gets a normal seat');
+  assert.notStrictEqual(g.playerId, 'p0', 'never seated as the host');
+  assert.ok(host.players[0].token !== 'host', 'host token is random, not the literal "host"');
+  assert.ok(/^tk-[0-9a-f]{32}$/.test(g.token), 'guest token is 128-bit hex');
+  g.close(); host.close();
+});
+
+test('security: malformed intents never crash the host or corrupt Array.prototype', async () => {
+  const host = new Net.HostSession({ name: 'Marc', transport: 'local', code: 'SECBBB' });
+  const g = makeGuest('SECBBB', 'Ada');
+  await waitFor(() => g.playerId, 'welcome');
+  host.startRound(9);
+  await waitFor(() => host.state, 'dealt');
+  const protoLenBefore = Array.prototype.length;
+  // __proto__ / length / NaN indices and junk payloads
+  ['__proto__', 'length', 'constructor', -1, 99, 1.5, null].forEach(function (idx) {
+    g.sendIntent({ type: 'play', from: { zone: 'blitz' }, to: { zone: 'post', idx: idx } }, 1);
+    g.sendIntent({ type: 'play', from: { zone: 'post', idx: idx }, to: { zone: 'dutch', idx: idx } }, 2);
+  });
+  g.transport.send({ t: 'intent', intent: null, n: 3 });
+  g.transport.send({ t: 'intent', n: 4 });
+  g.transport.send({ t: 'intent', intent: { type: 42 }, n: 5 });
+  g.transport.send({ t: 'garbage' });
+  g.transport.send('not-an-object');
+  await new Promise((r) => setTimeout(r, 60));
+  assert.strictEqual(Array.prototype.length, protoLenBefore, 'Array.prototype untouched');
+  assert.ok(!Array.prototype.color, 'no card leaked onto Array.prototype');
+  assert.strictEqual(host.state.status, 'playing', 'host still running');
+  // a legit intent still works afterward
+  const seq = host.state.seq;
+  g.sendIntent({ type: 'flip' }, 6);
+  await waitFor(() => host.state.seq > seq, 'host still accepts real intents');
+  g.close(); host.close();
+});
+
+test('security: guests receive a redacted state — no opponent hands, no seed', async () => {
+  const host = new Net.HostSession({ name: 'Marc', transport: 'local', code: 'SECCCC' });
+  const g = makeGuest('SECCCC', 'Ada');
+  await waitFor(() => g.playerId, 'welcome');
+  const states = collect(g, 'state');
+  host.startRound(1234);
+  const snap = await waitFor(() => states.find((s) => s.state), 'state').then((s) => s.state);
+  // own hand is real
+  assert.ok(snap.players[g.playerId].hand.every((c) => c && c.color), 'own hand is dealt face cards');
+  // the host (opponent) hand is length-preserved but contentless
+  const opp = snap.players.p0;
+  assert.strictEqual(opp.hand.length, 27, 'opponent hand count preserved');
+  assert.ok(opp.hand.every((c) => c == null), 'opponent hand cards are hidden');
+  assert.ok(opp.blitz.every((c) => c == null), 'opponent blitz hidden');
+  assert.strictEqual(snap.seed, undefined, 'deal seed withheld from guests');
+  g.close(); host.close();
+});
+
+test('security: intent floods are rate-limited', async () => {
+  const host = new Net.HostSession({ name: 'Marc', transport: 'local', code: 'SECDDD' });
+  const g = makeGuest('SECDDD', 'Ada');
+  await waitFor(() => g.playerId, 'welcome');
+  host.startRound(5);
+  await waitFor(() => host.state, 'dealt');
+  let accepted = 0;
+  const seq0 = host.state.seq;
+  for (let i = 0; i < 200; i++) g.sendIntent({ type: 'flip' }, i);
+  await new Promise((r) => setTimeout(r, 80));
+  accepted = host.state.seq - seq0;
+  assert.ok(accepted <= 25, 'burst of 200 flips is throttled to the bucket size, got ' + accepted);
+  g.close(); host.close();
+});
+
+test('security: id counter never recycles a seat after a kick', async () => {
+  const host = new Net.HostSession({ name: 'Marc', transport: 'local', code: 'SECEEE' });
+  const g1 = makeGuest('SECEEE', 'A');
+  const g2 = makeGuest('SECEEE', 'B');
+  const g3 = makeGuest('SECEEE', 'C');
+  await waitFor(() => g1.playerId && g2.playerId && g3.playerId, 'table of 4');
+  const ids = [g1.playerId, g2.playerId, g3.playerId];
+  host.removePlayer(g2.playerId); // kick the middle seat
+  const g4 = makeGuest('SECEEE', 'D');
+  await waitFor(() => g4.playerId, 'replacement joins');
+  assert.ok(ids.indexOf(g4.playerId) === -1, 'new seat id ' + g4.playerId + ' collides with a live seat');
+  const live = host.players.map((p) => p.id);
+  assert.strictEqual(new Set(live).size, live.length, 'all seat ids unique');
+  [g1, g3, g4].forEach((g) => g.close()); host.close();
+});
+
 test('host disappearing flips guests to reconnecting (heartbeat watchdog)', async () => {
   const host = new Net.HostSession({ name: 'Marc', transport: 'local', code: 'TESTAH' });
   const g1 = makeGuest('TESTAH', 'Ada');
