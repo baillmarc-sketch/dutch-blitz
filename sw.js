@@ -15,6 +15,7 @@ var ASSETS = [
   './storage.js',
   './app.js',
   './game-core.js',
+  './bot.js',
   './net.js',
   './play.js',
   './vendor/peerjs.min.js',

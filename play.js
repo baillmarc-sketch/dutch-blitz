@@ -22,6 +22,20 @@
   var params = new URLSearchParams(location.search);
   var TRANSPORT = params.get('transport') === 'local' ? 'local' : 'peer';
 
+  // carry the score-app's Theme / Folk-art / Big-type choices onto the table so
+  // the two halves feel like one app (they share localStorage + storage.js).
+  (function applyStoredSettings() {
+    try {
+      var store = new window.BlitzStore.Store(window.localStorage);
+      store.load();
+      var s = store.state.settings, root = document.documentElement;
+      if (s.darkMode === 'auto') root.removeAttribute('data-theme');
+      else root.setAttribute('data-theme', s.darkMode);
+      root.setAttribute('data-bigtype', s.bigType ? 'true' : 'false');
+      root.setAttribute('data-design', s.design === 'folk' ? 'folk' : 'ledger');
+    } catch (e) { /* fall back to prefers-color-scheme */ }
+  })();
+
   /* ---------- shared chrome ---------- */
   var toastTimer = null;
   function toast(msg) {
@@ -36,6 +50,8 @@
     el.textContent = '';
     setTimeout(function () { el.textContent = msg; }, 30);
   }
+  // light tactile feedback — the card "snap" you feel through a phone
+  function haptic(pattern) { try { if (navigator.vibrate) navigator.vibrate(pattern); } catch (e) { /* unsupported */ } }
   function setConn(cls, word) {
     var b = $('#connBadge');
     b.className = 'conn ' + cls;
@@ -60,6 +76,8 @@
     VIEWS.forEach(function (v) { $('#view-' + v).hidden = v !== view; });
     // table talk lives in the waiting moments — lobby and between rounds
     $('#chatDock').hidden = !(view === 'lobby' || view === 'scores');
+    // the header exit means different things: leave a table vs. go back to scores
+    $('#leaveLink').textContent = view === 'entry' ? '← Scorepad' : '← Leave';
   }
 
   /* ---------- table talk ---------- */
@@ -148,6 +166,7 @@
   var seenPlayN = 0;   // last lastPlay nonce we've shown in the ticker
   var trackRound = 0;  // round these snapshots belong to
   var resumeGuestCtx = null; // set while retrying a guest reconnect on load
+  var soloMode = false;      // practice vs computer — hosted locally, no code shared
 
   function myPlayer() { return payload && payload.state ? payload.state.players[myId] : null; }
   function sourceKey(from) { return from.zone + (from.idx != null ? from.idx : ''); }
@@ -191,7 +210,20 @@
     if (!name) { err.textContent = 'Enter your name first.'; err.hidden = false; return; }
     err.hidden = true;
     rememberName(name);
+    soloMode = false;
     startHost(name, parseInt($('#hostTarget').value, 10) || 75);
+  });
+
+  // Practice vs computer: host a private local table and pre-seat one bot so
+  // the player can start immediately (they can add/remove/retier from the lobby).
+  $('#soloBtn').addEventListener('click', function () {
+    var name = $('#hostName').value.trim() || 'You';
+    rememberName(name);
+    soloMode = true;
+    startHost(name, parseInt($('#hostTarget').value, 10) || 75);
+    if (session && session.addBot) session.addBot('medium');
+    roster = session.rosterPayload();
+    renderLobby();
   });
 
   $('#joinBtn').addEventListener('click', function () {
@@ -211,7 +243,8 @@
     myId = 'p0';
     setConn(restore ? 'reconnecting' : 'connecting', restore ? 'resuming' : 'connecting');
     session = new NET.HostSession(restore ? { restore: restore, transport: TRANSPORT } : { name: name, target: target, transport: TRANSPORT });
-    var persist = function () { try { saveSession(session.snapshot()); } catch (e) { /* fine */ } };
+    if (restore) soloMode = !!restore.solo;
+    var persist = function () { try { var s = session.snapshot(); s.solo = soloMode; saveSession(s); } catch (e) { /* fine */ } };
     wireCommon(session);
     session.on('status', function (s) {
       if (s === 'live') { setConn('', 'live'); }
@@ -242,8 +275,9 @@
     session.on('roster', function (r) { roster = r; renderLobby(); persist(); });
     session.on('nack', function (nack) { onNack(nack); });
     session.on('chat', function (line) { onChat(line); });
+    session.on('nudged', function () { toast('Table was stuck — decks nudged'); });
     roster = session.rosterPayload();
-    $('#roomLabel').textContent = 'TABLE ' + session.code;
+    $('#roomLabel').textContent = soloMode ? 'PRACTICE' : ('TABLE ' + session.code);
     session.on('state', function (p) { onState(p); persist(); });
     acquireWake(); // the host's device runs the game — keep it awake from the lobby on
     persist();
@@ -252,7 +286,9 @@
       // live state when they re-hello. Suppress the round-end celebration so a
       // reload on the score screen doesn't replay the Blitz stamp.
       payload = session.statePayload();
-      trackRound = restore.roundNo; lastEndedRound = restore.roundNo;
+      trackRound = restore.dealId || restore.roundNo;
+      lastEndedDeal = restore.dealId || restore.roundNo; // don't re-celebrate on resume
+      seenFirstState = true;
       if (restore.state.status === 'playing') { show('table'); renderTable(); }
       else if (restore.state.status === 'ended') { renderScores(false); show('scores'); }
       else { show('lobby'); renderLobby(); }
@@ -269,8 +305,20 @@
     if (roster.length < 2) return;
     session.startRound(forcedSeed);
   });
-  $('#nextRoundBtn').addEventListener('click', function () { if (isHost) session.startRound(); });
-  $('#endGameBtn').addEventListener('click', function () { if (isHost) backToLobby(); });
+  $('#nextRoundBtn').addEventListener('click', function () { if (isHost) session.startRound(forcedSeed); });
+  $('#endGameBtn').addEventListener('click', function () {
+    if (!isHost) return;
+    if (window.confirm('End this game and go back to the lobby? Round scores are kept.')) backToLobby();
+  });
+
+  // add computer players from the lobby (host only)
+  $('#botTiers').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-bot]');
+    if (!b || !isHost || !session.addBot) return;
+    if (roster.length >= 4) { toast('Table is full (4 players)'); return; }
+    var bot = session.addBot(b.getAttribute('data-bot'));
+    if (bot) { roster = session.rosterPayload(); renderLobby(); announce(bot.name + ' the ' + b.getAttribute('data-bot') + ' bot joined.'); }
+  });
   $('#backToLobbyBtn').addEventListener('click', function () { if (isHost) backToLobby(); });
   function backToLobby() {
     session.totals = {}; session.roundNo = 0; session.state = null;
@@ -370,8 +418,20 @@
     wired = true;
     // reload / app-switch: close QUIETLY (no "bye") so we can resume the seat
     window.addEventListener('pagehide', function () { if (session) try { session.close(true); } catch (e) {} });
-    // tapping Leave is deliberate — drop the saved session and say goodbye
-    $('#leaveLink').addEventListener('click', function () { clearSession(); if (session) try { session.close(); } catch (e) {} });
+    // back/forward-cache restore revives the DOM but the transport is dead —
+    // reload so the boot/resume path re-establishes the session
+    window.addEventListener('pageshow', function (e) { if (e.persisted) location.reload(); });
+    // tapping Leave is deliberate, but mid-round it's destructive — for the
+    // host it ends the table for everyone. Confirm before tearing it down.
+    $('#leaveLink').addEventListener('click', function (e) {
+      var mid = payload && payload.state && payload.state.status === 'playing';
+      if (session && mid) {
+        var msg = isHost ? 'End the table for everyone?' : 'Leave mid-round? Your cards sit out for the rest of the round.';
+        if (!window.confirm(msg)) { e.preventDefault(); return; }
+      }
+      clearSession();
+      if (session) try { session.close(); } catch (err) {}
+    });
   }
 
   /* ---------- lobby ---------- */
@@ -386,23 +446,30 @@
     $('#codeText').textContent = code.slice(0, 3) + ' ' + code.slice(3);
     $('#rosterLabel').textContent = 'At the table (' + roster.length + '/4)';
     $('#rosterList').innerHTML = roster.map(function (p, i) {
+      var tag = p.bot ? '<span class="tagme bot">' + esc((p.difficulty || 'bot').toUpperCase()) + ' BOT</span>'
+        : (p.id === 'p0' ? '<span class="tagme">HOST</span>' : '') + (p.id === myId ? '<span class="tagme">YOU</span>' : '');
       return '<li><span class="seat">' + (i + 1) + '</span>' +
-        '<span class="nm">' + esc(p.name) + '</span>' +
-        (p.id === 'p0' ? '<span class="tagme">HOST</span>' : '') +
-        (p.id === myId ? '<span class="tagme">YOU</span>' : '') +
-        '<span class="pdot' + (p.connected ? '' : ' off') + '" aria-hidden="true"></span>' +
-        '<span class="sr-only">' + (p.connected ? 'connected' : 'away') + '</span>' +
-        (isHost && p.id !== 'p0' ? '<button type="button" class="kick" data-kick="' + esc(p.id) + '" aria-label="Remove ' + esc(p.name) + '">✕</button>' : '') +
+        '<span class="nm">' + esc(p.name) + '</span>' + tag +
+        (p.bot ? '' : '<span class="pdot' + (p.connected ? '' : ' off') + '" aria-hidden="true"></span>' +
+          '<span class="sr-only">' + (p.connected ? 'connected' : 'away') + '</span>') +
+        (isHost && p.id !== 'p0' ? '<button type="button" class="kick" data-kick="' + esc(p.id) + '"' + (p.bot ? ' data-bot="1"' : '') + ' aria-label="Remove ' + esc(p.name) + '">✕</button>' : '') +
         '</li>';
     }).join('');
     $('#hostLobbyControls').hidden = !isHost;
     $('#guestLobbyNote').hidden = isHost;
+    // solo practice: no code to share, so hide the code lockup + share note
+    var soloUI = soloMode;
+    var lock = document.querySelector('.code-lockup'); if (lock) lock.hidden = soloUI;
+    if ($('#hostKeepNote')) $('#hostKeepNote').hidden = soloUI;
+    $('#botTiers').querySelectorAll('[data-bot]').forEach(function (b) { b.disabled = roster.length >= 4; });
     if (isHost) {
       var n = roster.length;
+      var bots = roster.filter(function (p) { return p.bot; }).length;
       $('#startBtn').disabled = n < 2;
       $('#startBtn').textContent = n < 2 ? 'Start round' : 'Start round (' + n + ' players)';
-      $('#startReason').textContent = n < 2 ? 'Waiting for players — need at least 2. Share the code!' :
-        (payload && payload.roundNo ? 'Round ' + (payload.roundNo + 1) + ' is next.' : 'Everyone in? Deal when ready.');
+      $('#startReason').textContent = n < 2
+        ? (soloUI ? 'Add at least one computer player to begin.' : 'Waiting for players — need at least 2. Share the code!')
+        : (payload && payload.roundNo ? 'Round ' + (payload.roundNo + 1) + ' is next.' : 'Everyone in? Deal when ready.');
     } else {
       var host = roster[0];
       $('#guestLobbyNote').textContent = 'Waiting for ' + (host ? host.name : 'the host') + ' to start the round…';
@@ -411,14 +478,29 @@
 
   $('#rosterList').addEventListener('click', function (e) {
     var k = e.target.closest('[data-kick]');
-    if (k && isHost) session.removePlayer(k.getAttribute('data-kick'));
+    if (!k || !isHost) return;
+    var id = k.getAttribute('data-kick');
+    if (k.getAttribute('data-bot')) { session.removeBot(id); roster = session.rosterPayload(); renderLobby(); }
+    else session.removePlayer(id);
   });
 
   $('#codeText').addEventListener('click', copyCode);
   $('#copyCodeBtn').addEventListener('click', copyCode);
   function copyCode() {
-    var code = isHost ? session.code : session.code;
-    if (navigator.clipboard) navigator.clipboard.writeText(code).then(function () { toast('Code copied'); });
+    var code = session.code;
+    function fallback() {
+      // clipboard API absent/blocked (insecure context, old WebView): select the
+      // code node (it has user-select:all) so a manual copy actually works
+      try {
+        var el = $('#codeText'), r = document.createRange(); r.selectNodeContents(el);
+        var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+        var ok = document.execCommand && document.execCommand('copy');
+        toast(ok ? 'Code copied' : 'Long-press the code to copy');
+      } catch (e) { toast('Long-press the code to copy'); }
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(code).then(function () { toast('Code copied'); }).catch(fallback);
+    } else fallback();
   }
   if (navigator.share) {
     $('#shareCodeBtn').hidden = false;
@@ -430,18 +512,24 @@
   }
 
   /* ---------- state handling ---------- */
-  var lastEndedRound = 0;
+  var lastEndedDeal = 0;   // dealId we've already celebrated + logged
+  var seenFirstState = false;
 
   function onState(p) {
     payload = p;
     inflight = {};
+    var dealId = p.dealId || p.roundNo; // dealId is match-stable; roundNo repeats
     if (!p.state) { // back to lobby
       show('lobby');
       renderLobby();
       return;
     }
-    if (p.roundNo !== trackRound) { // fresh deal — forget last round's board
-      prevTops = {}; prevBlitz = {}; seenPlayN = 0; trackRound = p.roundNo;
+    // if the very first state we ever see is already ended (joined/reloaded on
+    // the score screen), don't replay the celebration or log a round we missed
+    if (!seenFirstState && p.state.status === 'ended') lastEndedDeal = dealId;
+    seenFirstState = true;
+    if (dealId !== trackRound) { // fresh deal — forget last round's board
+      prevTops = {}; prevBlitz = {}; seenPlayN = 0; trackRound = dealId;
       shuffleReacts(); // new hand of quick-reacts each round
     }
     if (p.state.status === 'playing') {
@@ -455,8 +543,8 @@
       runTicker(p.lastPlay);
     } else if (p.state.status === 'ended') {
       renderTable();
-      if (p.roundNo !== lastEndedRound) {
-        lastEndedRound = p.roundNo;
+      if (dealId !== lastEndedDeal) {
+        lastEndedDeal = dealId;
         logRoundLocally(p);
         blitzMoment(p);
       }
@@ -465,9 +553,11 @@
 
   function blitzMoment(p) {
     var caller = p.state.players[p.state.winner];
-    $('#blitzCaller').textContent = (caller ? caller.name : '?') + ' calls it';
+    var iWon = p.state.winner === myId;
+    $('#blitzCaller').textContent = (caller ? caller.name : '?') + (iWon ? ' — that’s you!' : ' calls it');
     $('#blitzOverlay').hidden = false;
     announce('Blitz! ' + (caller ? caller.name : '') + ' ends the round.');
+    haptic(iWon ? [70, 40, 140] : [40, 30, 40]); // a bigger buzz when you win
     confettiBurst();
     releaseWake();
     setTimeout(function () {
@@ -624,6 +714,7 @@
     nSeq++;
     nToSource[nSeq] = srcKey;
     if (srcKey) inflight[srcKey] = true;
+    if (intent.type === 'play') haptic(8); // a small snap on every card you send
     if (isHost) {
       session.hostIntent(intent, nSeq); // state broadcast re-renders everything
     } else {
@@ -638,7 +729,14 @@
     if (src) delete inflight[src];
     renderTable();
     if (navigator.vibrate) navigator.vibrate(40);
-    var el = document.querySelector('[data-src="' + (src ? src.replace(/\d+$/, '') : '') + '"]');
+    // src is a zone key like "blitz"/"wood"/"post1" — shake the exact slot,
+    // not just the first Post pile
+    var el = null;
+    if (src) {
+      var m = src.match(/^(\w+?)(\d+)$/);
+      el = m ? document.querySelector('[data-src="' + m[1] + '"][data-idx="' + m[2] + '"]')
+             : document.querySelector('[data-src="' + src + '"]');
+    }
     if (el) { el.classList.add('shake'); setTimeout(function () { el.classList.remove('shake'); }, 260); }
     var msgs = {
       'beaten-to-it': 'Beaten to it!',
@@ -651,7 +749,7 @@
     announce(msgs[nack.reason] || 'Play rejected.');
   }
 
-  $('#flipBtn').addEventListener('pointerup', function () {
+  $('#flipBtn').addEventListener('click', function () {
     var me = myPlayer();
     if (!me || payload.state.status !== 'playing') return;
     selection = null;
@@ -661,7 +759,7 @@
     renderTable();
   });
 
-  $('#dutchGrid').addEventListener('pointerup', function (e) {
+  $('#dutchGrid').addEventListener('click', function (e) {
     var btn = e.target.closest('[data-pile]');
     if (!btn || !selection || payload.state.status !== 'playing') return;
     var which = btn.getAttribute('data-pile');
@@ -672,7 +770,7 @@
     renderTable();
   });
 
-  $('#youSlots').addEventListener('pointerup', function (e) {
+  $('#youSlots').addEventListener('click', function (e) {
     var btn = e.target.closest('[data-src]');
     if (!btn || payload.state.status !== 'playing') return;
     var me = myPlayer();
@@ -768,8 +866,9 @@
     try {
       var logged = JSON.parse(localStorage.getItem(loggedKey) || '{}');
       var code = session.code;
+      var dealId = p.dealId || p.roundNo; // match-stable so a replay logs cleanly
       logged[code] = logged[code] || [];
-      if (logged[code].indexOf(p.roundNo) !== -1) return;
+      if (logged[code].indexOf(dealId) !== -1) return;
 
       var store = new window.BlitzStore.Store(window.localStorage);
       store.load();
@@ -788,7 +887,11 @@
         store.addGame(game, false);
       }
       var scores = p.state.order.map(function (id) {
-        var local = game.players.find(function (x) { return x.name === p.state.players[id].name; });
+        var nm = p.state.players[id].name;
+        var local = game.players.find(function (x) { return x.name === nm; });
+        // a player who joined after this game was created isn't in the local
+        // roster yet — add them so their scores aren't silently dropped
+        if (!local) { E.addPlayer(game, nm); local = game.players[game.players.length - 1]; }
         // clamp host-supplied score into a sane per-round range before it
         // lands in the persistent scorepad — a hostile host can't inject junk
         var v = p.state.scores[id].score | 0;
@@ -797,7 +900,7 @@
       }).filter(Boolean);
       E.addRound(game, scores, Date.now());
       store.touch(game);
-      logged[code].push(p.roundNo);
+      logged[code].push(dealId);
       localStorage.setItem(loggedKey, JSON.stringify(logged));
     } catch (e) { /* logging is best-effort; play must never break */ }
   }

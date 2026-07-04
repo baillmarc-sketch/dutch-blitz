@@ -245,11 +245,15 @@
   /**
    * True when every player has cycled their whole hand at least once with no
    * successful play anywhere — the official stall; the host should nudge.
+   * `activeIds` (optional) restricts the check to players still in the game, so
+   * one walked-away guest can't freeze the table forever.
    */
-  function isStalled(state) {
+  function isStalled(state, activeIds) {
     if (state.status !== 'playing') return false;
-    return state.order.every(function (id) {
+    var ids = activeIds && activeIds.length ? activeIds : state.order;
+    return ids.every(function (id) {
       var p = state.players[id];
+      if (!p) return true;
       var cycle = Math.ceil((p.hand.length + p.wood.length) / 3) + 1;
       return (p.flipsSincePlay || 0) >= Math.max(cycle, 3);
     });

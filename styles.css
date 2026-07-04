@@ -9,6 +9,7 @@
   --c-blue: #2c5b8f;
   --c-green: #3f7345;
   --c-yellow: #d9a02f;
+  --c-yellow-ink: #8a6410; /* yellow as TEXT — the bright fill fails AA on cream */
 
   --cream: #f6f4ec;       /* the desk */
   --cream-deep: #efecdf;  /* worn paper */
@@ -47,7 +48,7 @@
     --c-red: #cf6d64;
     --c-blue: #7397bd;
     --c-green: #7ba384;
-    --c-yellow: #d3ac59;
+    --c-yellow: #d3ac59; --c-yellow-ink: #d3ac59;
     --accent: #e05a48;
     --accent-text: #f2907f;
     color-scheme: dark;
@@ -64,7 +65,7 @@
   --c-red: #cf6d64;
   --c-blue: #7397bd;
   --c-green: #7ba384;
-  --c-yellow: #d3ac59;
+  --c-yellow: #d3ac59; --c-yellow-ink: #d3ac59;
   --accent: #e05a48;
   --accent-text: #f2907f;
   color-scheme: dark;
@@ -172,7 +173,10 @@ h1, .game-name, .section-label, .btn, .tab, .chip-btn,
   display: inline-flex; align-items: center; justify-content: center;
   text-align: center;
 }
+.btn { text-decoration: none; } /* a.btn must not underline like a link */
 .btn:active { transform: translateY(1px); background: var(--cream-deep); }
+.btn:disabled, .chip-btn:disabled, .step-btn:disabled { opacity: 0.45; cursor: default; }
+.btn:disabled:active, .chip-btn:disabled:active { transform: none; }
 .btn-primary:active, .btn-danger:active { background: color-mix(in srgb, var(--ink) 18%, var(--accent)); }
 .btn-primary { background: var(--accent); color: var(--accent-ink); }
 .btn-outline { background: var(--card); }

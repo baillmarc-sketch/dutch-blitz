@@ -116,7 +116,7 @@ function check(name, ok, detail) {
   // thousands. Returns true if it made any progress this turn.
   const botTurn = async (pg) => {
     return pg.evaluate(() => {
-      const fire = (el) => el && el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      const fire = (el) => el && el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       const selected = () => document.querySelector('#youSlots .pcard.selected');
       const board = () => document.getElementById('youSlots').innerHTML + document.getElementById('dutchGrid').innerHTML;
       let progressed = false;
