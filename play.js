@@ -71,6 +71,12 @@
   /* hue rides a data attribute (play.css maps it to --hue) — the page's CSP
      has no 'unsafe-inline' for styles, so style="" attributes are dead */
 
+  /* Broadcast state comes from the HOST's device — never trust card fields
+     into markup. Colors pass a whitelist, numbers are coerced and clamped. */
+  function safeColor(c) { return G.COLORS.indexOf(c) !== -1 ? c : 'red'; }
+  function safeVal(v) { v = v | 0; return v < 1 ? 1 : v > 10 ? 10 : v; }
+  function safeNum(v, lo, hi) { v = v | 0; return v < lo ? lo : v > hi ? hi : v; }
+
   /* ---------- session state ---------- */
   var session = null;      // HostSession | GuestSession
   var isHost = false;
@@ -137,7 +143,12 @@
         startHost(name, target); // fresh random code
         return;
       }
+      if (code === 'signal-lost') { setConn('gone', 'signal lost'); toast('Lost the signal server — new players can’t join. Reload to reopen the table.'); return; }
       setConn('reconnecting', 'network issue');
+    });
+    session.on('signal', function (s) {
+      if (s === 'down') setConn('reconnecting', 'reconnecting…');
+      else setConn('', 'live');
     });
     session.on('roster', function (r) { roster = r; renderLobby(); });
     session.on('nack', function (nack) { onNack(nack); });
@@ -145,13 +156,16 @@
     $('#roomLabel').textContent = 'TABLE ' + session.code;
     show('lobby');
     renderLobby();
+    acquireWake(); // the host's device runs the game — keep it awake from the lobby on
     session.on('state', function (p) { onState(p); });
   }
 
+  // ?seed=N forces a reproducible deal (demos + the E2E); ignored in normal play
+  var forcedSeed = params.has('seed') ? (parseInt(params.get('seed'), 10) || 1) : null;
   $('#startBtn').addEventListener('click', function () {
     if (!isHost) return;
     if (roster.length < 2) return;
-    session.startRound();
+    session.startRound(forcedSeed);
   });
   $('#nextRoundBtn').addEventListener('click', function () { if (isHost) session.startRound(); });
   $('#endGameBtn').addEventListener('click', function () { if (isHost) backToLobby(); });
@@ -201,6 +215,7 @@
       'version': 'This table runs a newer Pile On. Refresh to update, then join again.',
       'round-in-progress': 'Round already started — ask the host to add you before the next deal.',
       'removed': 'The host removed you from the table.',
+      'join-timeout': 'Couldn’t reach that table. Check the code, and make sure the host still has Pile On open and online.',
     };
     if (messages[code]) {
       show('entry');
@@ -340,13 +355,14 @@
       var p = st.players[id];
       var r = roster.find(function (x) { return x.id === id; });
       var away = r && !r.connected;
-      var danger = p.blitz.length <= 2;
+      var blitzLeft = safeNum(p.blitz.length, 0, 10);
+      var danger = blitzLeft <= 2;
       return '<div class="opp' + (away ? ' away' : '') + '">' +
         '<span class="nm">' + esc(p.name) + '</span>' +
         '<span class="mini" aria-hidden="true"></span>' +
-        '<span class="bcount' + (danger ? ' danger' : '') + '" title="cards left in their Blitz pile">' + p.blitz.length + '</span>' +
+        '<span class="bcount' + (danger ? ' danger' : '') + '" title="cards left in their Blitz pile">' + blitzLeft + '</span>' +
         '<span class="pdot" aria-hidden="true"></span>' +
-        '<span class="sr-only">' + esc(p.name) + ' has ' + p.blitz.length + ' Blitz cards left' + (away ? ', away' : '') + '</span>' +
+        '<span class="sr-only">' + esc(p.name) + ' has ' + blitzLeft + ' Blitz cards left' + (away ? ', away' : '') + '</span>' +
         '</div>';
     }).join('');
   }
@@ -357,14 +373,16 @@
     var sel = selection ? selection.card : null;
     var legal = sel ? G.legalDutchTargets(st, sel) : [];
     var cells = st.dutch.map(function (pile, i) {
+      var color = safeColor(pile.color);
+      var topVal = safeVal(pile.top);
       if (pile.done) {
-        return '<button type="button" class="pile live done" disabled data-c="' + pile.color + '">10<span class="prog">done</span></button>';
+        return '<button type="button" class="pile live done" disabled data-c="' + color + '">10<span class="prog">done</span></button>';
       }
       var isLegal = legal.indexOf(i) !== -1;
-      return '<button type="button" class="pile live' + (isLegal ? ' legal' : '') + '" data-pile="' + i + '" data-c="' + pile.color + '"' +
-        ' aria-label="' + pile.color + ' pile at ' + pile.top + (isLegal ? ', legal target' : '') + '">' +
-        genderGlyph(pile.color, 9) + pile.top +
-        '<span class="prog">' + pile.top + '/10</span></button>';
+      return '<button type="button" class="pile live' + (isLegal ? ' legal' : '') + '" data-pile="' + i + '" data-c="' + color + '"' +
+        ' aria-label="' + color + ' pile at ' + topVal + (isLegal ? ', legal target' : '') + '">' +
+        genderGlyph(color, 9) + topVal +
+        '<span class="prog">' + topVal + '/10</span></button>';
     });
     var minSlots = Math.max(8, st.dutch.length + 1);
     var canNew = legal.indexOf('new') !== -1;
@@ -375,8 +393,10 @@
   }
 
   function cardHtml(card, extraClass, attrs) {
-    return '<button type="button" class="pcard ' + (extraClass || '') + (card.value === 10 ? ' ten' : '') + '" data-c="' + card.color + '" ' + (attrs || '') + '>' +
-      genderGlyph(card.color, 11) + card.value + '</button>';
+    var color = safeColor(card.color);
+    var value = safeVal(card.value);
+    return '<button type="button" class="pcard ' + (extraClass || '') + (value === 10 ? ' ten' : '') + '" data-c="' + color + '" ' + (attrs || '') + '>' +
+      genderGlyph(color, 11) + value + '</button>';
   }
 
   function renderYou() {
@@ -389,9 +409,9 @@
     var bTop = G.top(me.blitz);
     if (bTop) {
       slots.push('<div class="slot">' +
-        cardHtml(bTop, (selKey === 'blitz' ? 'selected' : '') + (inflight.blitz ? ' inflight' : ''), 'data-src="blitz" aria-label="Your Blitz card: ' + bTop.color + ' ' + bTop.value + ', ' + me.blitz.length + ' left"') +
-        '<span class="chit blitz">' + me.blitz.length + '</span>' +
-        '<div class="lbl">Blitz · ' + me.blitz.length + '</div></div>');
+        cardHtml(bTop, (selKey === 'blitz' ? 'selected' : '') + (inflight.blitz ? ' inflight' : ''), 'data-src="blitz" aria-label="Your Blitz card: ' + safeColor(bTop.color) + ' ' + safeVal(bTop.value) + ', ' + safeNum(me.blitz.length, 0, 10) + ' left"') +
+        '<span class="chit blitz">' + safeNum(me.blitz.length, 0, 10) + '</span>' +
+        '<div class="lbl">Blitz · ' + safeNum(me.blitz.length, 0, 10) + '</div></div>');
     } else {
       slots.push('<div class="slot"><button type="button" class="pcard slot-empty" disabled>OUT</button><div class="lbl">Blitz · 0</div></div>');
     }
@@ -403,7 +423,7 @@
       var postLegal = selection && legalPostTarget(me, selection, i);
       if (pTop) {
         slots.push('<div class="slot">' +
-          cardHtml(pTop, (selKey === key ? 'selected' : '') + (postLegal ? ' legal' : '') + (inflight[key] ? ' inflight' : ''), 'data-src="post" data-idx="' + i + '" aria-label="Post pile ' + (i + 1) + ': ' + pTop.color + ' ' + pTop.value + (postLegal ? ', legal target' : '') + '"') +
+          cardHtml(pTop, (selKey === key ? 'selected' : '') + (postLegal ? ' legal' : '') + (inflight[key] ? ' inflight' : ''), 'data-src="post" data-idx="' + i + '" aria-label="Post pile ' + (i + 1) + ': ' + safeColor(pTop.color) + ' ' + safeVal(pTop.value) + (postLegal ? ', legal target' : '') + '"') +
           '<div class="lbl">Post</div></div>');
       } else {
         slots.push('<div class="slot"><button type="button" class="pcard slot-empty' + (postLegal ? ' legal' : '') + '" data-src="post" data-idx="' + i + '" aria-label="Empty post slot ' + (i + 1) + ' — fills from your Blitz pile">＋</button><div class="lbl">Post</div></div>');
@@ -414,10 +434,10 @@
     var wTop = G.top(me.wood);
     if (wTop) {
       slots.push('<div class="slot">' +
-        cardHtml(wTop, (selKey === 'wood' ? 'selected' : '') + (inflight.wood ? ' inflight' : ''), 'data-src="wood" aria-label="Wood pile top: ' + wTop.color + ' ' + wTop.value + '"') +
+        cardHtml(wTop, (selKey === 'wood' ? 'selected' : '') + (inflight.wood ? ' inflight' : ''), 'data-src="wood" aria-label="Wood pile top: ' + safeColor(wTop.color) + ' ' + safeVal(wTop.value) + '"') +
         '<div class="lbl">Wood</div></div>');
     } else {
-      slots.push('<div class="slot"><button type="button" class="pcard back" disabled aria-label="Wood pile empty — flip to reveal"><span class="chit">' + me.hand.length + '</span></button><div class="lbl">Wood</div></div>');
+      slots.push('<div class="slot"><button type="button" class="pcard back" disabled aria-label="Wood pile empty — flip to reveal"><span class="chit">' + safeNum(me.hand.length, 0, 40) + '</span></button><div class="lbl">Wood</div></div>');
     }
 
     $('#youSlots').innerHTML = slots.join('');
@@ -565,11 +585,14 @@
     $('#scoreSheet').innerHTML = rows.map(function (id) {
       var pl = st.players[id];
       var sc = st.scores ? st.scores[id] : null;
-      var total = p.totals[id] || 0;
+      var total = safeNum(p.totals[id] || 0, -9999, 9999);
       var isW = champion === id;
+      var played = sc ? safeNum(sc.played, 0, 40) : 0;
+      var bLeft = sc ? safeNum(sc.blitzLeft, 0, 10) : 0;
+      var scv = sc ? safeNum(sc.score, -999, 999) : 0;
       return '<div class="row' + (isW ? ' winner' : '') + '">' +
         '<span class="nm">' + esc(pl.name) + (st.winner === id ? ' ✦' : '') + '</span>' +
-        (sc ? '<span class="detail">+' + sc.played + ' · −2×' + sc.blitzLeft + ' = ' + (sc.score >= 0 ? '+' : '') + '<span class="' + (sc.score < 0 ? 'neg-red' : '') + '">' + sc.score + '</span></span>' : '') +
+        (sc ? '<span class="detail">+' + played + ' · −2×' + bLeft + ' = ' + (scv >= 0 ? '+' : '') + '<span class="' + (scv < 0 ? 'neg-red' : '') + '">' + scv + '</span></span>' : '') +
         '<span class="rt">' + total + '</span></div>';
     }).join('');
 
@@ -612,7 +635,11 @@
       }
       var scores = p.state.order.map(function (id) {
         var local = game.players.find(function (x) { return x.name === p.state.players[id].name; });
-        return local ? { playerId: local.id, mode: 'simple', value: p.state.scores[id].score } : null;
+        // clamp host-supplied score into a sane per-round range before it
+        // lands in the persistent scorepad — a hostile host can't inject junk
+        var v = p.state.scores[id].score | 0;
+        if (v < -20) v = -20; if (v > 40) v = 40;
+        return local ? { playerId: local.id, mode: 'simple', value: v } : null;
       }).filter(Boolean);
       E.addRound(game, scores, Date.now());
       store.touch(game);
@@ -628,12 +655,19 @@
     if (is) { $('#flipBtn').textContent = 'RECONNECTING…'; }
   }
 
+  var wakeWanted = false;
   function acquireWake() {
+    wakeWanted = true;
     if (navigator.wakeLock && navigator.wakeLock.request) {
       navigator.wakeLock.request('screen').then(function (l) { wakeLock = l; }).catch(function () { /* fine */ });
     }
   }
-  function releaseWake() { if (wakeLock) { wakeLock.release().catch(function () {}); wakeLock = null; } }
+  function releaseWake() { wakeWanted = false; if (wakeLock) { wakeLock.release().catch(function () {}); wakeLock = null; } }
+  // wake locks auto-release when the tab is hidden — re-take it on return so
+  // the host's screen (which runs the game) doesn't sleep between rounds
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible' && wakeWanted && !wakeLock) acquireWake();
+  });
 
   // deep link straight into the join card
   if (deepCode) $('#joinName').focus();

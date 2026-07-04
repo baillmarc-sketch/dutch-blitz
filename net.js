@@ -19,10 +19,25 @@
   var HEARTBEAT_MS = 2000;
   var HOST_TIMEOUT_MS = 7000;
 
+  /** Cryptographically strong randomness where available (codes + tokens). */
+  function randBytes(n) {
+    var a = new Uint8Array(n);
+    if (global.crypto && global.crypto.getRandomValues) global.crypto.getRandomValues(a);
+    else for (var i = 0; i < n; i++) a[i] = Math.floor(Math.random() * 256);
+    return a;
+  }
   function makeCode(len) {
-    var out = '';
-    for (var i = 0; i < (len || 6); i++) out += ALPHABET[Math.floor(Math.random() * ALPHABET.length)];
+    len = len || 6;
+    var out = '', b = randBytes(len);
+    // rejection-free: ALPHABET is 27 chars; a tiny modulo bias is fine for a
+    // human-readable room code (still ~28 bits of entropy at length 6)
+    for (var i = 0; i < len; i++) out += ALPHABET[b[i] % ALPHABET.length];
     return out;
+  }
+  function randToken() {
+    var b = randBytes(16), s = '';
+    for (var i = 0; i < b.length; i++) s += (b[i] + 256).toString(16).slice(1);
+    return 'tk-' + s;
   }
   function normalizeCode(raw) {
     return String(raw || '').toUpperCase().replace(/[^A-Z2-9]/g, '');
@@ -59,14 +74,41 @@
     };
   }
 
+  /**
+   * Mobile browsers drop the signaling WebSocket whenever the phone locks or
+   * the tab is backgrounded. PeerJS then fires 'disconnected' and does NOT
+   * reconnect on its own — without this handler the room silently dies and
+   * every new guest gets 'no-such-room'. Reconnect keeps the same peer id,
+   * so the share code stays valid; open data channels are unaffected.
+   */
+  function keepSignalAlive(peer, cbs) {
+    var tries = 0;
+    peer.on('open', function () { tries = 0; if (cbs.onSignal) cbs.onSignal('up'); });
+    peer.on('disconnected', function () {
+      if (peer.destroyed) return;
+      if (cbs.onSignal) cbs.onSignal('down');
+      if (tries++ < 30) {
+        setTimeout(function () {
+          if (!peer.destroyed && peer.disconnected) { try { peer.reconnect(); } catch (e) { /* retry next round */ } }
+        }, Math.min(1000 * tries, 5000));
+      } else {
+        cbs.onError('signal-lost');
+      }
+    });
+  }
+
   function peerHostTransport(code, cbs) {
     var peer = new global.Peer(PEER_PREFIX + code, { debug: 0 });
     var conns = {};
     peer.on('open', function () { cbs.onOpen(); });
     peer.on('error', function (err) { cbs.onError(err && err.type ? err.type : 'peer-error'); });
+    keepSignalAlive(peer, cbs);
     peer.on('connection', function (conn) {
       conns[conn.connectionId] = conn;
-      conn.on('data', function (msg) { cbs.onMessage(conn.connectionId, msg); });
+      conn.on('data', function (msg) {
+        // a throwing handler must never tear down the data channel
+        try { cbs.onMessage(conn.connectionId, msg); } catch (e) { /* drop bad frame */ }
+      });
       conn.on('close', function () { delete conns[conn.connectionId]; cbs.onClose(conn.connectionId); });
       conn.on('error', function () { delete conns[conn.connectionId]; cbs.onClose(conn.connectionId); });
     });
@@ -88,11 +130,13 @@
       else cbs.onError(type || 'peer-error');
     });
     peer.on('open', function () {
+      if (conn) return; // signaling reconnected; the data channel is intact
       conn = peer.connect(PEER_PREFIX + code, { reliable: true });
       conn.on('open', function () { cbs.onOpen(); });
-      conn.on('data', function (msg) { cbs.onMessage(msg); });
+      conn.on('data', function (msg) { try { cbs.onMessage(msg); } catch (e) { /* drop bad frame */ } });
       conn.on('close', function () { cbs.onClose(); });
     });
+    keepSignalAlive(peer, cbs);
     return {
       send: function (msg) { if (conn && conn.open) conn.send(msg); },
       close: function () { peer.destroy(); },
@@ -118,10 +162,15 @@
     this.totals = {};
     this.state = null;
     this.listeners = {};
-    this.players = [{ id: 'p0', name: opts.name, connId: null, token: 'host', connected: true }];
+    this.nextSeat = 1; // p0 is the host; monotonic so a kick never recycles an id
+    // p0's token is random and NEVER leaves this device — the host runs the
+    // engine locally and never re-joins over the wire, so no guest can present
+    // it to hijack the host seat.
+    this.players = [{ id: 'p0', name: opts.name, connId: null, token: randToken(), connected: true }];
 
     this.transport = hostTransport(opts.transport || 'peer', this.code, {
       onOpen: function () { self.emit('status', 'live'); },
+      onSignal: function (s) { self.emit('signal', s); },
       onError: function (code) { self.emit('err', code); },
       onMessage: function (connId, msg) { self.onMessage(connId, msg); },
       onClose: function (connId) {
@@ -149,13 +198,58 @@
     this.emit('roster', this.rosterPayload());
   };
 
-  HostSession.prototype.statePayload = function () {
-    return { t: 'state', roundNo: this.roundNo, target: this.target, totals: this.totals, state: this.state };
+  HostSession.prototype.statePayload = function (state) {
+    return { t: 'state', roundNo: this.roundNo, target: this.target, totals: this.totals, state: state === undefined ? this.state : state };
+  };
+
+  /**
+   * Guests only ever receive a state redacted for their seat: opponents'
+   * cards become length-preserving null placeholders and the deal seed is
+   * withheld, so a modified client can't read other hands or re-derive the
+   * whole deal. Public facts (Dutch piles, counts, scores) pass through.
+   */
+  function redactFor(state, viewerId) {
+    if (!state) return state;
+    var out = {
+      status: state.status, seq: state.seq, winner: state.winner,
+      scores: state.scores, completedPiles: state.completedPiles,
+      dutch: state.dutch, order: state.order, players: {},
+    };
+    state.order.forEach(function (id) {
+      var p = state.players[id];
+      if (id === viewerId) { out.players[id] = p; return; }
+      out.players[id] = {
+        id: p.id, name: p.name, identity: p.identity, dutchCount: p.dutchCount,
+        blitz: new Array(p.blitz.length),
+        hand: new Array(p.hand.length),
+        wood: new Array(p.wood.length),
+        post: p.post.map(function (s) { return new Array(s.length); }),
+      };
+    });
+    return out;
+  }
+
+  HostSession.prototype.sendStateTo = function (player) {
+    if (!player.connId) return;
+    this.transport.send(player.connId, this.statePayload(redactFor(this.state, player.id)));
   };
 
   HostSession.prototype.broadcastState = function () {
-    this.transport.broadcast(this.statePayload());
-    this.emit('state', this.statePayload());
+    var self = this;
+    this.players.forEach(function (p) { if (p.id !== 'p0' && p.connected) self.sendStateTo(p); });
+    this.emit('state', this.statePayload()); // the host UI sees the full truth
+  };
+
+  /** Token-bucket rate limit per connection — caps intent floods (10/sec). */
+  HostSession.prototype.allow = function (connId) {
+    var now = (global.Date && Date.now) ? Date.now() : 0;
+    var b = (this.buckets = this.buckets || {})[connId] || { tokens: 20, ts: now };
+    b.tokens = Math.min(20, b.tokens + (now - b.ts) / 100);
+    b.ts = now;
+    this.buckets[connId] = b;
+    if (b.tokens < 1) return false;
+    b.tokens -= 1;
+    return true;
   };
 
   HostSession.prototype.onMessage = function (connId, msg) {
@@ -163,28 +257,33 @@
     if (!msg || typeof msg !== 'object') return;
     if (msg.t === 'hello') {
       if ((msg.v | 0) !== PROTOCOL_V) { this.transport.send(connId, { t: 'err', code: 'version' }); return; }
-      // reconnect with a token re-attaches the same seat
-      var existing = msg.token && this.players.find(function (p) { return p.token === msg.token; });
+      // reconnect with a token re-attaches the same seat — but NEVER the host
+      // seat (p0's token stays on the host device and is never a valid hello)
+      var tok = typeof msg.token === 'string' ? msg.token : null;
+      var existing = tok && this.players.find(function (p) { return p.id !== 'p0' && p.token === tok; });
       if (existing) {
         existing.connId = connId; existing.connected = true;
       } else {
         if (this.state && this.state.status === 'playing') { this.transport.send(connId, { t: 'err', code: 'round-in-progress' }); return; }
         if (this.players.length >= 4) { this.transport.send(connId, { t: 'err', code: 'full' }); return; }
-        var name = String(msg.name || 'Player').slice(0, 12) || 'Player';
+        var name = String(msg.name == null ? 'Player' : msg.name).slice(0, 12).trim() || 'Player';
         var base = name; var n = 2;
         while (this.players.some(function (p) { return p.name.toLowerCase() === name.toLowerCase(); })) name = base + ' ' + n++;
-        existing = { id: 'p' + this.players.length, name: name, connId: connId, token: 'tk-' + Math.random().toString(36).slice(2, 10), connected: true };
+        existing = { id: 'p' + this.nextSeat++, name: name, connId: connId, token: randToken(), connected: true };
         this.players.push(existing);
       }
       this.transport.send(connId, { t: 'welcome', playerId: existing.id, name: existing.name, token: existing.token, code: this.code, roster: this.rosterPayload() });
-      if (this.state) this.transport.send(connId, this.statePayload());
+      if (this.state) this.sendStateTo(existing);
       this.broadcastRoster();
       return;
     }
     if (msg.t === 'intent') {
       var p = this.players.find(function (x) { return x.connId === connId; });
       if (!p) return;
-      this.applyFrom(p.id, msg.intent, msg.n, function (nack) { self.transport.send(connId, nack); });
+      if (!this.allow(connId)) return; // silently drop floods
+      var intent = msg.intent;
+      if (!intent || typeof intent !== 'object' || typeof intent.type !== 'string') return;
+      this.applyFrom(p.id, intent, msg.n, function (nack) { self.transport.send(connId, nack); });
       return;
     }
     if (msg.t === 'bye') {
@@ -262,6 +361,11 @@
     this.closed = false;
     this.connect();
 
+    // if no welcome ever arrives, say so — a silent spinner reads as broken
+    this.joinTimer = setTimeout(function () {
+      if (!self.closed && !self.playerId) self.emit('err', 'join-timeout');
+    }, 15000);
+
     this.watch = setInterval(function () {
       if (self.closed || !self.playerId) return;
       if (self.lastHb && Date.now() - self.lastHb > HOST_TIMEOUT_MS) {
@@ -300,6 +404,7 @@
     if (!msg || typeof msg !== 'object') return;
     this.lastHb = Date.now();
     if (msg.t === 'welcome') {
+      clearTimeout(this.joinTimer);
       this.playerId = msg.playerId;
       this.token = msg.token;
       this.name = msg.name;
@@ -323,6 +428,7 @@
   GuestSession.prototype.close = function () {
     this.closed = true;
     clearInterval(this.watch);
+    clearTimeout(this.joinTimer);
     try { this.transport.send({ t: 'bye' }); this.transport.close(); } catch (e) { /* gone */ }
   };
 
