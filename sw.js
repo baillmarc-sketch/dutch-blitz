@@ -7,11 +7,17 @@ var CACHE = 'blitz-sidecar-v1'; /* %DEPLOY_STAMP% */
 var ASSETS = [
   './',
   './index.html',
+  './play.html',
   './styles.css',
   './folk.css',
+  './play.css',
   './engine.js',
   './storage.js',
   './app.js',
+  './game-core.js',
+  './net.js',
+  './play.js',
+  './vendor/peerjs.min.js',
   './manifest.webmanifest',
   './icons/icon.svg',
   './icons/icon-192.png',
@@ -56,15 +62,18 @@ self.addEventListener('fetch', function (event) {
 
   // Navigations: network-first so deployed updates arrive; cached shell offline.
   if (event.request.mode === 'navigate') {
+    // cache the page under its own key — play.html must never be stored
+    // (or served offline) as index.html
+    var page = /\/play\.html$/.test(url.pathname) ? './play.html' : './index.html';
     event.respondWith(
       fetch(event.request).then(function (response) {
         if (response && response.ok) {
           var copy = response.clone();
-          caches.open(CACHE).then(function (cache) { cache.put('./index.html', copy); });
+          caches.open(CACHE).then(function (cache) { cache.put(page, copy); });
         }
         return response;
       }).catch(function () {
-        return caches.match('./index.html');
+        return caches.match(page);
       })
     );
     return;

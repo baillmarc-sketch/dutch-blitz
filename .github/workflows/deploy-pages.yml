@@ -22,6 +22,10 @@ jobs:
           node-version: 22
       - name: Engine + storage tests (seed regression 26/23/11/9)
         run: node tests/engine.test.cjs
+      - name: Live-play rules engine tests
+        run: node tests/game-core.test.cjs
+      - name: Live-play networking tests (local transport)
+        run: node tests/net.test.cjs
 
   # Publishes an explicit allowlist of site files to the gh-pages branch
   # (GitHub Pages source). The Pages REST API is not accessible to the
@@ -37,8 +41,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir /tmp/site
-          cp index.html styles.css folk.css engine.js storage.js app.js sw.js manifest.webmanifest /tmp/site/
+          cp index.html play.html styles.css folk.css play.css engine.js storage.js app.js game-core.js net.js play.js sw.js manifest.webmanifest /tmp/site/
           cp -r icons /tmp/site/icons
+          cp -r vendor /tmp/site/vendor
           touch /tmp/site/.nojekyll
           # Stamp the service-worker cache name with the commit SHA so every
           # deploy changes sw.js bytes and installed clients pick up the update.
@@ -47,8 +52,8 @@ jobs:
           # Version-stamp asset URLs in the HTML and the SW precache list, so a
           # freshly deployed page can never pair with a CDN-stale asset (the
           # Pages CDN caches per-URL for 10 minutes; a new query string is a new URL).
-          for f in styles.css folk.css engine.js storage.js app.js manifest.webmanifest; do
-            sed -i "s|\"$f\"|\"$f?v=${V}\"|g" /tmp/site/index.html
+          for f in styles.css folk.css play.css engine.js storage.js app.js game-core.js net.js play.js vendor/peerjs.min.js manifest.webmanifest; do
+            sed -i "s|\"$f\"|\"$f?v=${V}\"|g" /tmp/site/index.html /tmp/site/play.html
             sed -i "s|'./$f'|'./$f?v=${V}'|g" /tmp/site/sw.js
           done
           git config user.name "github-actions[bot]"
