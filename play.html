@@ -81,7 +81,12 @@
   <!-- ============ TABLE ============ -->
   <section id="view-table" class="table-view" hidden>
     <div class="opp-strip" id="oppStrip"></div>
-    <div class="dutch-wrap"><div class="dutch-grid" id="dutchGrid" aria-label="Dutch piles — shared, build 1 to 10 by color"></div></div>
+    <div class="dutch-wrap">
+      <div class="arena">
+        <div class="arena-head"><span class="arena-label">The table</span><span class="ticker" id="ticker" aria-live="polite"></span></div>
+        <div class="dutch-grid" id="dutchGrid" aria-label="Dutch piles — shared, build 1 to 10 by color"></div>
+      </div>
+    </div>
     <div class="you" id="youPanel">
       <div class="slots" id="youSlots"></div>
       <div class="actions">
@@ -108,6 +113,20 @@
       </div>
     </div>
   </section>
+
+  <!-- ============ TABLE TALK (lobby + between rounds) ============ -->
+  <div id="chatDock" class="chat-dock" hidden>
+    <div class="chat-log" id="chatLog" aria-live="polite" aria-label="Table chat"></div>
+    <div class="chat-reacts">
+      <button class="react" type="button" data-react="🔥 Nice one">🔥 Nice one</button>
+      <button class="react" type="button" data-react="😏 Too slow">😏 Too slow</button>
+      <button class="react" type="button" data-react="✏️ Deal me in">✏️ Deal me in</button>
+    </div>
+    <form class="chat-input" id="chatForm" autocomplete="off">
+      <input type="text" id="chatText" maxlength="120" placeholder="Say something…" autocomplete="off" autocorrect="on" enterkeyhint="send">
+      <button type="submit" class="chip-btn" id="chatSend">Send</button>
+    </form>
+  </div>
 </main>
 
 <div id="blitzOverlay" class="blitz-overlay" hidden>
