@@ -117,11 +117,7 @@
   <!-- ============ TABLE TALK (lobby + between rounds) ============ -->
   <div id="chatDock" class="chat-dock" hidden>
     <div class="chat-log" id="chatLog" aria-live="polite" aria-label="Table chat"></div>
-    <div class="chat-reacts">
-      <button class="react" type="button" data-react="🔥 Nice one">🔥 Nice one</button>
-      <button class="react" type="button" data-react="😏 Too slow">😏 Too slow</button>
-      <button class="react" type="button" data-react="✏️ Deal me in">✏️ Deal me in</button>
-    </div>
+    <div class="chat-reacts" id="chatReacts"><!-- 3 random reacts, reshuffled each round --></div>
     <form class="chat-input" id="chatForm" autocomplete="off">
       <input type="text" id="chatText" maxlength="120" placeholder="Say something…" autocomplete="off" autocorrect="on" enterkeyhint="send">
       <button type="submit" class="chip-btn" id="chatSend">Send</button>

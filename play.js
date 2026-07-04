@@ -63,6 +63,26 @@
   }
 
   /* ---------- table talk ---------- */
+  // A grab-bag of one-tap reacts; three are drawn fresh each round so the
+  // buttons feel different every time you land back between rounds.
+  var REACT_POOL = [
+    '🔥 Nice one', '👏 Clutch', '⚡ Blitzed it', '🐐 Legend',
+    '😏 Too slow', '🐌 Slowpoke', '💨 Eat dust', '🥱 Yawn',
+    '✅ Deal me in', '🚀 Let’s go', '🔁 Again!', '👀 Bring it',
+    '🪵 Knock wood', '🪓 Timber!', '🌲 Out of woods', '🍂 Pile on!',
+    '😅 So close', '🍀 Lucky!',
+  ];
+  function shuffleReacts() {
+    var pool = REACT_POOL.slice();
+    for (var i = pool.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var t = pool[i]; pool[i] = pool[j]; pool[j] = t;
+    }
+    $('#chatReacts').innerHTML = pool.slice(0, 3).map(function (r) {
+      return '<button class="react" type="button" data-react="' + esc(r) + '">' + esc(r) + '</button>';
+    }).join('');
+  }
+
   function onChat(line) {
     if (!line || !line.text) return;
     var log = $('#chatLog');
@@ -422,6 +442,7 @@
     }
     if (p.roundNo !== trackRound) { // fresh deal — forget last round's board
       prevTops = {}; prevBlitz = {}; seenPlayN = 0; trackRound = p.roundNo;
+      shuffleReacts(); // new hand of quick-reacts each round
     }
     if (p.state.status === 'playing') {
       if ($('#view-table').hidden) {
@@ -803,6 +824,7 @@
   });
 
   /* ---------- boot: resume, deep-link, or fresh ---------- */
+  shuffleReacts(); // an opening set for the lobby before the first deal
   wireCommon();
   (function boot() {
     // Auto-resume targets the real cross-device case (peer transport, separate
