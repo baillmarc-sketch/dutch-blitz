@@ -55,11 +55,12 @@ const check = (n, ok, d) => { if (ok) console.log('  ok - ' + n); else { failure
   check('chat dock is visible in the lobby', await host.locator('#chatDock').isVisible());
   check('three quick-reacts are present', await host.locator('.chat-reacts .react').count() === 3);
 
-  // guest taps a quick-react → host sees it
-  await guest.locator('.chat-reacts .react', { hasText: 'Nice one' }).click();
+  // guest taps whatever quick-react is showing (they're random each round) → host sees exactly it
+  const reactText = (await guest.locator('.chat-reacts .react').first().innerText()).trim();
+  await guest.locator('.chat-reacts .react').first().click();
   await host.waitForFunction(() => document.querySelectorAll('#chatLog .chat-line').length >= 1);
   const hostSaw = await host.locator('#chatLog .chat-line').last().innerText();
-  check('quick-react relays to the host', /Ada/.test(hostSaw) && /Nice one/.test(hostSaw), hostSaw);
+  check('quick-react relays to the host verbatim', /Ada/.test(hostSaw) && hostSaw.includes(reactText), hostSaw + ' :: sent ' + reactText);
 
   // host types a message → guest sees it, attributed to the host
   await host.fill('#chatText', 'good luck all');
