@@ -19,6 +19,8 @@
 <header class="playbar">
   <a class="leave" href="index.html" id="leaveLink">← Scorepad</a>
   <span class="room" id="roomLabel">PILE ON · LIVE</span>
+  <button class="sound-toggle" id="helpBtn" type="button" aria-label="How to play" title="How to play">?</button>
+  <button class="sound-toggle" id="soundBtn" type="button" aria-pressed="false" aria-label="Sound on/off" title="Sound">🔊</button>
   <span class="conn gone" id="connBadge"><i></i><span id="connWord">not connected</span></span>
 </header>
 
@@ -151,6 +153,21 @@
   </div>
 </div>
 
+<div id="helpSheet" class="help-sheet" hidden>
+  <div class="help-card" role="dialog" aria-modal="true" aria-label="How to play">
+    <button class="help-close" id="helpClose" type="button" aria-label="Close">✕</button>
+    <h2>How to play</h2>
+    <ul class="help-list">
+      <li><b>Win the round:</b> empty your red-ringed <b>Blitz</b> pile.</li>
+      <li><b>The table:</b> build the shared piles <b>1 → 10, one color each</b>. Any 1 starts a new pile. First card down wins the spot.</li>
+      <li><b>Play a card:</b> tap it — it jumps to the middle if it fits and scores.</li>
+      <li><b>Post piles:</b> park spares on your 3 Posts — build <b>down</b>, alternating ▲ and ○. Empty Posts fill from your Blitz.</li>
+      <li><b>Stuck?</b> <b>FLIP</b> turns 3 cards from your hand onto Wood. Run out? Flip again to recycle.</li>
+      <li><b>Score:</b> +1 for each card you played to the middle, −2 for each card left in your Blitz.</li>
+    </ul>
+  </div>
+</div>
+
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <p id="liveAnnounce" class="sr-only" aria-live="polite"></p>
 <div id="confetti" class="confetti" aria-hidden="true"></div>
@@ -162,6 +179,7 @@
 <script src="storage.js"></script>
 <script src="game-core.js"></script>
 <script src="bot.js"></script>
+<script src="sound.js"></script>
 <script src="net.js"></script>
 <script src="play.js"></script>
 </body>

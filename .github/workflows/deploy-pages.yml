@@ -43,7 +43,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir /tmp/site
-          cp index.html play.html styles.css folk.css play.css engine.js storage.js app.js game-core.js bot.js net.js play.js sw.js manifest.webmanifest /tmp/site/
+          cp index.html play.html styles.css folk.css play.css engine.js storage.js app.js game-core.js bot.js sound.js net.js play.js sw.js manifest.webmanifest /tmp/site/
           cp -r icons /tmp/site/icons
           cp -r vendor /tmp/site/vendor
           touch /tmp/site/.nojekyll
@@ -54,7 +54,7 @@ jobs:
           # Version-stamp asset URLs in the HTML and the SW precache list, so a
           # freshly deployed page can never pair with a CDN-stale asset (the
           # Pages CDN caches per-URL for 10 minutes; a new query string is a new URL).
-          for f in styles.css folk.css play.css engine.js storage.js app.js game-core.js bot.js net.js play.js vendor/peerjs.min.js manifest.webmanifest; do
+          for f in styles.css folk.css play.css engine.js storage.js app.js game-core.js bot.js sound.js net.js play.js vendor/peerjs.min.js manifest.webmanifest; do
             sed -i "s|\"$f\"|\"$f?v=${V}\"|g" /tmp/site/index.html /tmp/site/play.html
             sed -i "s|'./$f'|'./$f?v=${V}'|g" /tmp/site/sw.js
           done
