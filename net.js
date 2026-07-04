@@ -165,13 +165,14 @@
       this.target = r.target || 75;
       this.hostName = r.hostName || (r.players[0] && r.players[0].name);
       this.roundNo = r.roundNo || 0;
+      this.dealId = r.dealId || 0;
       this.totals = r.totals || {};
       this.state = r.state || null;
       this.lastPlay = r.lastPlay || null;
       this.nextSeat = r.nextSeat || r.players.length;
       this.players = r.players.map(function (p, i) {
-        // everyone but the host starts disconnected until they reconnect
-        return { id: p.id, name: p.name, token: p.token, connId: null, connected: i === 0 };
+        // bots and the host come back connected; human guests reconnect
+        return { id: p.id, name: p.name, token: p.token, connId: null, connected: i === 0 || !!p.isBot, isBot: !!p.isBot, difficulty: p.difficulty };
       });
     } else {
       this.code = opts.code || makeCode(6);
@@ -198,7 +199,10 @@
       },
     });
 
+    this.botClocks = {};
+    this.botTimer = null;
     this.hb = setInterval(function () { self.transport.broadcast({ t: 'hb' }); }, HEARTBEAT_MS);
+    if (r && this.hasBots()) this.scheduleBots(this.state && this.state.status === 'playing');
   }
 
   HostSession.prototype.on = function (ev, cb) { (this.listeners[ev] = this.listeners[ev] || []).push(cb); };
@@ -210,15 +214,15 @@
   HostSession.prototype.snapshot = function () {
     return {
       role: 'host', code: this.code, target: this.target, hostName: this.hostName,
-      roundNo: this.roundNo, totals: this.totals, state: this.state,
+      roundNo: this.roundNo, dealId: this.dealId || 0, totals: this.totals, state: this.state,
       lastPlay: this.lastPlay || null, nextSeat: this.nextSeat,
-      players: this.players.map(function (p) { return { id: p.id, name: p.name, token: p.token }; }),
+      players: this.players.map(function (p) { return { id: p.id, name: p.name, token: p.token, isBot: !!p.isBot, difficulty: p.difficulty }; }),
     };
   };
 
   HostSession.prototype.rosterPayload = function () {
     return this.players.map(function (p) {
-      return { id: p.id, name: p.name, connected: p.connected };
+      return { id: p.id, name: p.name, connected: p.connected, bot: !!p.isBot, difficulty: p.difficulty };
     });
   };
 
@@ -230,7 +234,7 @@
   HostSession.prototype.statePayload = function (state) {
     // lastPlay rides alongside (not inside) state so it survives redaction —
     // guests use it to animate the exact pile and show the activity ticker
-    return { t: 'state', roundNo: this.roundNo, target: this.target, totals: this.totals, lastPlay: this.lastPlay || null, state: state === undefined ? this.state : state };
+    return { t: 'state', roundNo: this.roundNo, dealId: this.dealId || 0, target: this.target, totals: this.totals, lastPlay: this.lastPlay || null, state: state === undefined ? this.state : state };
   };
 
   /**
@@ -286,6 +290,9 @@
   HostSession.prototype.onMessage = function (connId, msg) {
     var self = this;
     if (!msg || typeof msg !== 'object') return;
+    // every inbound message spends from the flood budget — a hostile guest
+    // can't amplify by spamming hellos (each forces a redact+broadcast)
+    if (!this.allow(connId)) return;
     if (msg.t === 'hello') {
       if ((msg.v | 0) !== PROTOCOL_V) { this.transport.send(connId, { t: 'err', code: 'version' }); return; }
       // reconnect with a token re-attaches the same seat — but NEVER the host
@@ -311,16 +318,18 @@
     if (msg.t === 'intent') {
       var p = this.players.find(function (x) { return x.connId === connId; });
       if (!p) return;
-      if (!this.allow(connId)) return; // silently drop floods
       var intent = msg.intent;
       if (!intent || typeof intent !== 'object' || typeof intent.type !== 'string') return;
+      // guests may only flip or play — 'nudge' is host-internal (the stall
+      // breaker). Accepting it from the wire would let a client rotate every
+      // player's hidden hand at will and suppress stall detection.
+      if (intent.type !== 'flip' && intent.type !== 'play') return;
       this.applyFrom(p.id, intent, msg.n, function (nack) { self.transport.send(connId, nack); });
       return;
     }
     if (msg.t === 'chat') {
       var cp = this.players.find(function (x) { return x.connId === connId; });
       if (!cp) return;
-      if (!this.allow(connId)) return; // chat shares the flood budget
       this.relayChat(cp.id, cp.name, msg.text);
       return;
     }
@@ -341,15 +350,24 @@
 
   HostSession.prototype.sendChat = function (text) { this.relayChat('p0', this.hostName, text); };
 
-  /** Single entry point for every intent — host's own taps use it too. */
+  /** Single entry point for every intent — host taps, guest messages, and
+      bots all funnel through here, so nothing can bypass the rules. */
   HostSession.prototype.applyFrom = function (playerId, intent, n, nackTo) {
+    var r = this._apply(playerId, intent, n, nackTo);
+    this.broadcastState();
+    return r;
+  };
+
+  /** Apply without broadcasting — lets the bot scheduler batch several moves
+      into one broadcast per tick. Returns the applyIntent result. */
+  HostSession.prototype._apply = function (playerId, intent, n, nackTo) {
     var G = global.BlitzPlay;
-    if (!this.state) return;
+    if (!this.state) return null;
     var r = G.applyIntent(this.state, playerId, intent);
     if (!r.ok) {
       var nack = { t: 'nack', n: n, reason: r.reason, intent: intent };
       if (nackTo) nackTo(nack); else this.emit('nack', nack);
-      return;
+      return r;
     }
     // record the play so guests can animate the right pile + run the ticker
     if (r.event && r.event.type === 'play') {
@@ -362,28 +380,117 @@
       };
     }
     // official stall rule, applied automatically when the whole table is dry
-    if (intent.type === 'flip' && G.isStalled(this.state)) {
+    if (intent.type === 'flip' && G.isStalled(this.state, this.activeIds())) {
       G.applyIntent(this.state, playerId, { type: 'nudge' });
       this.emit('nudged');
       this.transport.broadcast({ t: 'nudged' });
     }
     if (this.state.status === 'ended') this.settleRound();
-    this.broadcastState();
+    return r;
+  };
+
+  /** Ids that still count for stall detection — a walked-away guest shouldn't
+      freeze the table forever (bots and connected humans only). */
+  HostSession.prototype.activeIds = function () {
+    var self = this;
+    return this.state.order.filter(function (id) {
+      var p = self.players.find(function (x) { return x.id === id; });
+      return p && (p.isBot || p.connected || p.id === 'p0');
+    });
   };
 
   HostSession.prototype.hostIntent = function (intent, n) {
     this.applyFrom('p0', intent, n == null ? 0 : n, null);
   };
 
+  /* ---------------- computer opponents ---------------- */
+
+  HostSession.prototype.addBot = function (difficulty) {
+    if (this.players.length >= 4) return null;
+    if (this.state && this.state.status === 'playing') return null;
+    var Bot = global.BlitzBot;
+    var cfg = Bot.tier(difficulty);
+    // give each bot a distinct woodsy name, de-duped like human names
+    var base = cfg.name, name = base, k = 2;
+    while (this.players.some(function (p) { return p.name.toLowerCase() === name.toLowerCase(); })) name = base + ' ' + k++;
+    var bot = { id: 'p' + this.nextSeat++, name: name, connId: null, token: null, connected: true, isBot: true, difficulty: difficulty };
+    this.players.push(bot);
+    this.broadcastRoster();
+    return bot;
+  };
+
+  HostSession.prototype.removeBot = function (id) {
+    var p = this.players.find(function (x) { return x.id === id; });
+    if (!p || !p.isBot) return;
+    this.players = this.players.filter(function (x) { return x.id !== id; });
+    delete this.botClocks[id];
+    this.broadcastRoster();
+  };
+
+  HostSession.prototype.hasBots = function () {
+    return this.players.some(function (p) { return p.isBot; });
+  };
+
+  /** (Re)arm each bot's next-action clock at the start of a deal. */
+  HostSession.prototype.scheduleBots = function (fresh) {
+    var self = this;
+    var Bot = global.BlitzBot;
+    var now = (global.Date && Date.now) ? Date.now() : 0;
+    this.botClocks = this.botClocks || {};
+    this.players.forEach(function (p) {
+      if (!p.isBot) return;
+      if (fresh || self.botClocks[p.id] == null) {
+        var cfg = Bot.tier(p.difficulty);
+        self.botClocks[p.id] = now + Math.round(cfg.think[0] + (cfg.think[1] - cfg.think[0]) * Math.random());
+      }
+    });
+    if (!this.botTimer && this.hasBots()) {
+      this.botTimer = setInterval(function () { self.botTick(); }, 90);
+    }
+  };
+
+  /** One scheduler tick: let every bot whose clock is due make one move,
+      then broadcast once. Rubber-banding eases Easy off near a human win. */
+  HostSession.prototype.botTick = function () {
+    var self = this, G = global.BlitzPlay, Bot = global.BlitzBot;
+    if (!this.state || this.state.status !== 'playing') return;
+    var now = (global.Date && Date.now) ? Date.now() : 0;
+    var acted = false;
+    // is any human about to win? (for Easy rubber-banding)
+    var humanLow = this.players.some(function (p) {
+      return !p.isBot && self.state.players[p.id] && self.state.players[p.id].blitz.length <= 3;
+    });
+    this.players.forEach(function (p) {
+      if (!p.isBot || !self.state.players[p.id]) return;
+      if ((self.botClocks[p.id] || 0) > now) return;
+      var cfg = Bot.tier(p.difficulty);
+      var choice = Bot.decide(G, self.state, p.id, cfg, Math.random);
+      if (choice) { self._apply(p.id, choice.intent, 0, function () {}); acted = true; }
+      var rubber = cfg.rubberband === true && humanLow && self.state.players[p.id].blitz.length >= 7;
+      self.botClocks[p.id] = now + Bot.nextDelay(cfg, Math.random, choice ? choice.kind : 'flip', rubber);
+    });
+    if (acted) this.broadcastState();
+    if (this.state.status !== 'playing') this.stopBots();
+  };
+
+  HostSession.prototype.stopBots = function () {
+    if (this.botTimer) { clearInterval(this.botTimer); this.botTimer = null; }
+  };
+
   HostSession.prototype.startRound = function (seed) {
     var G = global.BlitzPlay;
     this.roundNo++;
+    // dealId is monotonic across the whole table (never resets on a new match)
+    // so clients dedupe celebrations + score logging on it — roundNo alone
+    // repeats (round 1 of match 2 == round 1 of match 1) and soft-locks.
+    this.dealId = (this.dealId || 0) + 1;
     this.lastPlay = null; // fresh deal, no history to animate
     this.state = G.newRound(
       this.players.map(function (p) { return { id: p.id, name: p.name }; }),
       seed == null ? Math.floor(Math.random() * 2147483647) : seed
     );
     this.broadcastState();
+    this.scheduleBots(true); // wake bots for the new deal
   };
 
   HostSession.prototype.settleRound = function () {
@@ -403,6 +510,7 @@
 
   HostSession.prototype.close = function (silent) {
     clearInterval(this.hb);
+    this.stopBots();
     // a silent close (page reload) must NOT tell guests the table is gone —
     // they should wait and reconnect once the host page comes back up
     if (!silent) this.transport.broadcast({ t: 'bye' });
@@ -420,6 +528,8 @@
     this.playerId = null;
     this.token = opts.token || null;
     this.lastHb = 0;
+    this.degraded = false; // are we currently showing "reconnecting"?
+    this.staleTicks = 0;
     this.closed = false;
     this.connect();
 
@@ -430,8 +540,15 @@
 
     this.watch = setInterval(function () {
       if (self.closed || !self.playerId) return;
-      if (self.lastHb && Date.now() - self.lastHb > HOST_TIMEOUT_MS) {
-        self.emit('status', 'reconnecting');
+      var stale = self.lastHb && Date.now() - self.lastHb > HOST_TIMEOUT_MS;
+      if (stale) {
+        if (!self.degraded) { self.degraded = true; self.emit('status', 'reconnecting'); }
+        // a WebRTC data channel can half-open (phone sleep) without ever firing
+        // 'close' — after a few stale beats, force a full reconnect ourselves
+        if (++self.staleTicks >= 4) { self.staleTicks = 0; self.scheduleReconnect(); }
+      } else if (self.degraded) {
+        // heartbeats resumed on their own — come back to life
+        self.degraded = false; self.staleTicks = 0; self.emit('status', 'live');
       }
     }, 1500);
   }
@@ -465,6 +582,10 @@
   GuestSession.prototype.onMessage = function (msg) {
     if (!msg || typeof msg !== 'object') return;
     this.lastHb = Date.now();
+    this.staleTicks = 0;
+    // any traffic from the host means we're connected again — clear a stale
+    // "reconnecting" immediately rather than waiting for the next watch tick
+    if (this.degraded && msg.t !== 'bye') { this.degraded = false; this.emit('status', 'live'); }
     if (msg.t === 'welcome') {
       clearTimeout(this.joinTimer);
       this.playerId = msg.playerId;

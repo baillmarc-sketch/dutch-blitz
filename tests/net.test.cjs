@@ -9,6 +9,7 @@
 // net.js and game-core.js are plain browser scripts; give them a `self`.
 globalThis.self = globalThis;
 globalThis.BlitzPlay = require('../game-core.js'); // UMD exports via module in Node
+globalThis.BlitzBot = require('../bot.js'); // host uses this to drive bots
 require('../net.js'); // attaches globalThis.BlitzNet
 
 const assert = require('node:assert');
@@ -342,6 +343,76 @@ test('host snapshot + restore reattaches guests mid-round by token', async () =>
   const seat = host2.players.find((p) => p.token === g1.token);
   assert.ok(seat && seat.connected, 'guest reattached to the same seat after restore');
   g1.close(); host2.close();
+});
+
+test('security: a guest cannot force a table-wide nudge', async () => {
+  const host = new Net.HostSession({ name: 'Marc', transport: 'local', code: 'NUDGEX' });
+  const g = makeGuest('NUDGEX', 'Mallory');
+  await waitFor(() => g.playerId, 'joined');
+  host.startRound(7);
+  await waitFor(() => host.state, 'dealt');
+  const handBefore = host.state.players[g.playerId].hand.map((c) => c.id).join(',');
+  const seqBefore = host.state.seq;
+  for (let i = 0; i < 20; i++) g.transport.send({ t: 'intent', intent: { type: 'nudge' }, n: i });
+  await new Promise((r) => setTimeout(r, 80));
+  assert.strictEqual(host.state.seq, seqBefore, 'no nudge was applied');
+  assert.strictEqual(host.state.players[g.playerId].hand.map((c) => c.id).join(','), handBefore, 'hands untouched');
+  g.close(); host.close();
+});
+
+// simulate the human host actively playing (solo practice): drive p0 through
+// the same bot brain on a timer until the round ends.
+function driveHostSeat(host) {
+  const G = globalThis.BlitzPlay, Bot = globalThis.BlitzBot, cfg = Bot.tier('medium');
+  const t = setInterval(() => {
+    if (!host.state || host.state.status !== 'playing') return;
+    const c = Bot.decide(G, host.state, 'p0', cfg, Math.random);
+    if (c && c.kind !== 'misplay') host.hostIntent(c.intent);
+  }, 120);
+  return () => clearInterval(t);
+}
+
+test('bots: added to the roster, deal, play a full round to a Blitz, and settle', async () => {
+  const host = new Net.HostSession({ name: 'Marc', transport: 'local', code: 'BOTAAA' });
+  const b1 = host.addBot('hard');
+  const b2 = host.addBot('expert');
+  assert.ok(b1 && b2 && b1.isBot && b2.isBot, 'bots seated');
+  assert.strictEqual(host.rosterPayload().filter((p) => p.bot).length, 2, 'roster marks bots');
+  const stop = driveHostSeat(host);
+  host.startRound(7);
+  await waitFor(() => host.state.status === 'ended', 'bots finished the round', 25000);
+  stop();
+  assert.ok(host.state.winner, 'someone won');
+  const sc = host.state.scores;
+  Object.keys(sc).forEach((id) => {
+    assert.strictEqual(sc[id].score, sc[id].played - 2 * sc[id].blitzLeft, id + ' scored correctly');
+  });
+  assert.ok(host.totals[host.state.winner] !== undefined, 'winner has a running total');
+  host.close();
+});
+
+test('bots: only ever produce legal moves (they go through applyIntent)', async () => {
+  const host = new Net.HostSession({ name: 'Marc', transport: 'local', code: 'BOTLEG' });
+  host.addBot('expert');
+  let badRejects = 0;
+  const orig = host._apply.bind(host);
+  host._apply = function (pid, intent, n, nackTo) {
+    const r = orig(pid, intent, n, nackTo);
+    if (r && !r.ok && intent.type === 'play' && r.reason !== 'beaten-to-it' && r.reason !== 'no-such-post') badRejects++;
+    return r;
+  };
+  let applies = 0;
+  const orig2 = host._apply;
+  host._apply = function (pid, intent, n, nackTo) { if (pid !== 'p0') applies++; return orig2(pid, intent, n, nackTo); };
+  const stop = driveHostSeat(host);
+  host.startRound(3);
+  // run the bot for a few seconds of real play, then judge its move legality
+  await new Promise((r) => setTimeout(r, 3500));
+  stop();
+  assert.ok(applies > 5, 'bot actually made moves (' + applies + ')');
+  // expert misplayRate is 0.003; only a tiny fraction should be real rejects
+  assert.ok(badRejects <= 3, 'bot produced too many illegal non-race moves: ' + badRejects + ' of ' + applies);
+  host.close();
 });
 
 test('host disappearing flips guests to reconnecting (heartbeat watchdog)', async () => {
